@@ -1,38 +1,45 @@
-Build
-=====
+# Build
+
+## Two stages build
 
 Build the developpement image :
 
 ```bash
 export release=mar18c
-docker build -f Dockerfile.dev . --build-arg release=$release
+docker build --tag abeelen/gildas:build  --build-arg release=$release -f Dockerfile.dev .
 ```
 
-tag it
-```bash
-docker tag $release abeelen/gildas:build
+extract the compiled files
+
+```
+docker container create --name extract abeelen/gildas:build
+docker container cp extract:/gildas-exe-$release gildas-exe-$release
+docker container rm -f extract
 ```
 
-and make a tar from the files
-```
-docker run -it -u $(id -u) \
-    -v "/home/$USER:/home/$USER" \
-    abeelen/gildas:build tar cvzf $PWD/gildas-exe-$release.tar.gz /gildas-exe-$release
-```
+# extract the compiled files
+# ```
+# docker run -it -u $(id -u) \
+#     -v "/home/$USER:/home/$USER" \
+#     abeelen/gildas:build tar cvzf $PWD/gildas-exe-$release.tar.gz /gildas-exe-$release
+# ```
 
 Build the execution image :
 ```bash
-docker build -f Dockerfile . --build-arg release=$release
+docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile .
 ```
 
-Finally tag this one
-```bash
-docker tag $release abeelen/gildas:$release
-```
+## One stage build
 
+With Docker 17.05 or higher :
 
-Usage
-=====
+``bash
+export release=mar18c
+docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile.multistage .
+``
+
+# Usage
+
 
 To launch gildas, simply launch :
 
