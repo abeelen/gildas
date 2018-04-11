@@ -17,12 +17,14 @@ docker container cp extract:/gildas-exe-$release gildas-exe-$release
 docker container rm -f extract
 ```
 
-# extract the compiled files
-# ```
-# docker run -it -u $(id -u) \
-#     -v "/home/$USER:/home/$USER" \
-#     abeelen/gildas:build tar cvzf $PWD/gildas-exe-$release.tar.gz /gildas-exe-$release
-# ```
+<!---
+extract the compiled files
+ ```
+ docker run -it -u $(id -u) \
+     -v "/home/$USER:/home/$USER" \
+     abeelen/gildas:build tar cvzf $PWD/gildas-exe-$release.tar.gz /gildas-exe-$release
+ ```
+--->
 
 Build the execution image :
 ```bash
