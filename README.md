@@ -33,10 +33,10 @@ docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-a
 
 With Docker 17.05 or higher :
 
-``bash
+```bash
 export release=mar18c
 docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile.multistage .
-``
+```
 
 # Usage
 
