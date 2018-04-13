@@ -52,5 +52,5 @@ docker run -it --hostname "gildas" -u $(id -u) \
        -v "/etc/passwd:/etc/passwd:ro" \
        -v "/home/$USER:/home/$USER" \
        -v "/tmp/.X11-unix:/tmp/.X11-unix" \
-       abeelen/gildas:feb17c /bin/bash
+       abeelen/gildas:latest /bin/bash --rcfile /etc/bash.bashrc
 ```
