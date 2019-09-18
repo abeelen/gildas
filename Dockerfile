@@ -1,6 +1,6 @@
 FROM debian:stretch
 ARG release
-ENV release=${release}
+ENV release=${DOCKER_TAG}
 RUN apt-get -y update && apt-get install -y \
     libx11-6 \
     libpng16-16 \

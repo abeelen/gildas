@@ -1,6 +1,6 @@
 FROM debian:stretch as builder
 ARG release
-ENV release=${release}
+ENV release=${DOCKER_TAG}
 RUN apt-get -y update && apt-get install -y \
     libx11-dev \
     libpng-dev \
@@ -23,7 +23,7 @@ RUN curl http://www.iram.fr/~gildas/dist/gildas-src-$release.tar.xz | tar xJ && 
 
 FROM debian:stretch
 ARG release
-ENV release=${release}
+ENV release=${DOCKER_TAG}
 RUN apt-get -y update && apt-get install -y \
     libx11-6 \
     libpng16-16 \
