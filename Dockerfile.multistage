@@ -1,4 +1,4 @@
-FROM debian:stretch as worker
+FROM debian:stretch as gildas_worker
 RUN apt-get -y update && apt-get install -y \
     libx11-6 \
     libpng16-16 \
@@ -9,7 +9,7 @@ RUN apt-get -y update && apt-get install -y \
     python-numpy \
     libgtk2.0
 
-FROM worker as _builder
+FROM gildas_worker as gildas_builder
 RUN apt-get -y update && apt-get install -y \
     libx11-dev \
     libpng-dev \
@@ -22,7 +22,7 @@ RUN apt-get -y update && apt-get install -y \
     curl
 
 
-FROM _builder as builder
+FROM gildas_builder as builder
 ARG release
 ENV release=${release}
 RUN curl http://www.iram.fr/~gildas/dist/gildas-src-$release.tar.xz | tar xJ && \
@@ -34,7 +34,7 @@ RUN curl http://www.iram.fr/~gildas/dist/gildas-src-$release.tar.xz | tar xJ && 
     rm -Rf gildas-src-$release && \
     cd gildas-exe-$release && curl http://www.iram.fr/~gildas/dist/gildas-doc-$release.tar.xz | tar xJ
 
-FROM worker
+FROM gildas_worker
 ARG release
 ENV release=${release}
 RUN echo 'export GAG_ROOT_DIR=/gildas-exe-$release' >> /etc/bash.bashrc && \
