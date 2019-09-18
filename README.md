@@ -5,15 +5,15 @@
 Build the developpement image :
 
 ```bash
-export DOCKER_TAG=mar18c
-docker build --tag abeelen/gildas:build  --build-arg DOCKER_TAG=$DOCKER_TAG -f Dockerfile.dev .
+export release=mar18c
+docker build --tag abeelen/gildas:build  --build-arg release=$release -f Dockerfile.dev .
 ```
 
 extract the compiled files
 
 ```
 docker container create --name extract abeelen/gildas:build
-docker container cp extract:/gildas-exe-$DOCKER_TAG gildas-exe-$DOCKER_TAG
+docker container cp extract:/gildas-exe-$release gildas-exe-$release
 docker container rm -f extract
 ```
 
@@ -22,13 +22,13 @@ extract the compiled files
  ```
  docker run -it -u $(id -u) \
      -v "/home/$USER:/home/$USER" \
-     abeelen/gildas:build tar cvzf $PWD/gildas-exe-$DOCKER_TAG.tar.gz /gildas-exe-$DOCKER_TAG
+     abeelen/gildas:build tar cvzf $PWD/gildas-exe-$release.tar.gz /gildas-exe-$release
  ```
 --->
 
 Build the execution image :
 ```bash
-docker build --tag abeelen/gildas:$DOCKER_TAG --tag abeelen/gildas:latest --build-arg release=$DOCKER_TAG -f Dockerfile .
+docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile .
 ```
 
 ## One stage build
@@ -36,8 +36,8 @@ docker build --tag abeelen/gildas:$DOCKER_TAG --tag abeelen/gildas:latest --buil
 With Docker 17.05 or higher :
 
 ```bash
-export DOCKER_TAG=mar18c
-docker build --tag abeelen/gildas:$DOCKER_TAG --tag abeelen/gildas:latest --build-arg release=$DOCKER_TAG -f Dockerfile.multistage .
+export release=mar18c
+docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile.multistage .
 ```
 
 # Usage
