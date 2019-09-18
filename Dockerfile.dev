@@ -9,7 +9,7 @@ RUN apt-get -y update && apt-get install -y \
     libforms-dev \
     python-dev \
     python-numpy \
-    libgtk2.0-dev \
+    Libgtk2.0-dev \
     gfortran \
     curl
 RUN curl http://www.iram.fr/~gildas/dist/gildas-src-$release.tar.gz | tar xz && \
