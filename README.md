@@ -64,3 +64,5 @@ open -a XQuartz
 ip=$(ifconfig en0 | grep inet | awk '$1=="inet" {print $2}’)
 xhost + $ip
 ```
+
+`Dockerfile` for this project are available at https://git.ias.u-psud.fr/abeelen/gildas
