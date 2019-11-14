@@ -45,7 +45,16 @@ will mount the user home for Unix Users
 ```bash
 -volume "/Users/$USER:/Users/$USER"
 ```
-will do the same for MacOS users
+will do the same for MacOS users. MacOS users should also open remote display access : 
+
+```bash
+open -a XQuartz
+# (In the XQuartz preferences, go to the “Security” tab and make sure you’ve got “Allow connections from network clients” ticked)
+ip=$(ifconfig en0 | grep inet | awk '$1=="inet" {print $2}’)
+xhost + $ip
+```
+
+
 
 Starting from the oct19a, one has to define which gildas environement to use either `gaggildas` or `gagpiic` before launching gildas command. It is easier to create usefull aliases in `~/.bashrc`
 
@@ -66,3 +75,5 @@ alias astro='gildas_docker "gaggildas; astro"'
 alias piic='gildas_docker "gagpiic; piic"'
 [...]
 ```
+
+`Dockerfile` for this project are available at https://git.ias.u-psud.fr/abeelen/gildas
