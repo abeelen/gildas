@@ -52,6 +52,7 @@ alias mapping='gildas_docker "gaggildas; mapping"'
 alias astro='gildas_docker "gaggildas; astro"'
 alias piic='gildas_docker "gagpiic; piic"'
 [...]
+alias imager='gildas_docker "gaggildas; imager"'
 ```
 
 Alternatively if you do not need PIIC,
@@ -71,6 +72,7 @@ alias clic='gildas_docker clic'
 alias mapping='gildas_docker mapping'
 alias astro='gildas_docker astro'
 [...]
+alias imager='gildas_docker imager"'
 ```
 
 # Build
