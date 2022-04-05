@@ -1,11 +1,12 @@
-FROM debian:stretch as gildas_worker
+FROM debian:stable as gildas_worker
 RUN apt-get -y update && apt-get install -y \
     libx11-6 \
     libpng16-16 \
     libfftw3-3 \
-    libcfitsio5 \
+    libcfitsio9 \
     libforms2 \
     python3 \
+    python-is-python3 \
     python3-numpy \
     libgtk2.0
 
@@ -27,9 +28,9 @@ ARG release
 ENV release=${release}
 ARG ARCHIVE
 # if --build-arg ARCHIVE=1 set the url to the archive page
-ENV GILDAS_URL=${ARCHIVE:+http://www.iram.fr/~gildas/dist/archive/gildas}
+ENV GILDAS_URL=${ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/gildas}
 # else keep the main directory
-ENV GILDAS_URL=${GILDAS_URL:-http://www.iram.fr/~gildas/dist}
+ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
 CMD sh -c 
 RUN curl $GILDAS_URL/gildas-src-$release.tar.xz | tar xJ && \
     bash -c "cd gildas-src-$release && GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
