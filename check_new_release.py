@@ -38,7 +38,7 @@ def is_in_archive(release, piic=False):
 print('# Without piic')
 for release in _gildas + _archived_gildas:
     if release not in tags:
-        print('* {} not in dockerhub'.format(release))
+        print('# * {} not in dockerhub'.format(release))
         cmd = 'export release={}; '.format(release)
         cmd += 'docker build --tag abeelen/gildas:${release} '
         cmd += '--target gildas '
@@ -52,7 +52,7 @@ print('# With piic')
 for release in _piic + _archived_piic:
     if '{}-piic'.format(release) in tags:
         continue
-    print('* {} not in dockerhub launch :'.format(release))
+    print('# * {} not in dockerhub launch :'.format(release))
     cmd = 'export release={}; '.format(release)
     cmd += 'docker build --tag abeelen/gildas:${release}-piic '
     cmd += '--target gildas-piic '
