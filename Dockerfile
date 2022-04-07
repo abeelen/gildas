@@ -57,9 +57,9 @@ from gildas as gildas-piic
 COPY --from=builder /etc/bash.bashrc /etc/bash.bashrc
 ARG PIIC_ARCHIVE
 # if --build-arg ARCHIVE=1 set the url to the archive page
-ENV GILDAS_URL=${PIIC_ARCHIVE:+http://www.iram.fr/~gildas/dist/archive/gildas}
+ENV GILDAS_URL=${PIIC_ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/gildas}
 # else keep the main directory
-ENV GILDAS_URL=${GILDAS_URL:-http://www.iram.fr/~gildas/dist}
+ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
 RUN curl $GILDAS_URL/piic-exe-$release.tar.xz | tar xJ; exit 0
 RUN echo '# \n\
 # Two separate gildas environement (PIIC.README)...\n\
