@@ -4,10 +4,12 @@ import click
 from bs4 import BeautifulSoup
 
 def gildas_release(package, archive=False):
-    uri = 'http://www.iram.fr/~gildas/dist/'
+    uri = 'https://www.iram.fr/~gildas/dist/'
 
-    if archive:
-        uri = 'http://www.iram.fr/~gildas/dist/archive/gildas'
+    if archive and package == "gildas":
+        uri = 'https://www.iram.fr/~gildas/dist/archive/gildas'
+    elif archive and package == "piic":
+        uri = 'https://www.iram.fr/~gildas/dist/archive/piic'
 
     if package == 'gildas':
         package = 'gildas-src'
@@ -21,6 +23,10 @@ def gildas_release(package, archive=False):
     soup = BeautifulSoup(r.text, features="lxml")
     links = [link.attrs['href'] for link in soup.find_all('a') if '.tar.xz' in link.attrs['href']]
     releases = [filename.split('-')[2].split('.')[0] for filename in links if filename.startswith(package)]
+
+    # Cleaning...
+    releases = [release for release in releases if release != 'ifort']
+    
     return releases
 
 @click.command()
