@@ -34,7 +34,7 @@ ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
 CMD sh -c 
 RUN curl $GILDAS_URL/gildas-src-$release.tar.xz | tar xJ && \
     bash -c "cd gildas-src-$release && GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
-    make && make -j 4 install" && \
+    make && make -j 16 install" && \
     rm -Rf gildas-src-$release && \
     cd gildas-exe-$release && curl $GILDAS_URL/gildas-doc-$release.tar.xz | tar xJ
 
@@ -43,12 +43,12 @@ FROM gildas_worker as gildas
 ARG release
 ENV release=${release}
 COPY --from=builder /gildas-exe-$release /gildas-exe-$release
-RUN echo '# \n\
-echo export GAG_ROOT_DIR=/gildas-exe-$release >> /etc/bash.bashrc \n\
-echo export GAG_EXEC_SYSTEM=x86_64-debian9-gfortran-openmp >> /etc/bash.bashrc \n\
-echo . $GAG_ROOT_DIR/etc/bash_profile >> /etc/bash.bashrc \n\
-\n'\
->> /etc/bash.bashrc
+SHELL ["/bin/bash", "-c"]
+RUN . /etc/os-release && \
+    echo "# Gildas" >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
 
 ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
 
@@ -57,20 +57,20 @@ from gildas as gildas-piic
 COPY --from=builder /etc/bash.bashrc /etc/bash.bashrc
 ARG PIIC_ARCHIVE
 # if --build-arg ARCHIVE=1 set the url to the archive page
-ENV GILDAS_URL=${PIIC_ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/gildas}
+ENV GILDAS_URL=${PIIC_ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/piic}
 # else keep the main directory
 ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
 RUN curl $GILDAS_URL/piic-exe-$release.tar.xz | tar xJ; exit 0
-RUN echo '# \n\
-# Two separate gildas environement (PIIC.README)...\n\
-gagpiic () {\n\
-export GAG_ROOT_DIR=/piic-exe-$release\n\
-export GAG_EXEC_SYSTEM=x86_64-generic\n\
-. $GAG_ROOT_DIR/etc/bash_profile\n\
-}\n\
-gaggildas () {\n\
-export GAG_ROOT_DIR=/gildas-exe-$release\n\
-export GAG_EXEC_SYSTEM=x86_64-debian9-gfortran-openmp\n\
-. $GAG_ROOT_DIR/etc/bash_profile\n\
-}\n'\
->> /etc/bash.bashrc
+SHELL ["/bin/bash", "-c"]
+RUN . /etc/os-release && \
+    echo '# Two separate gildas environement (PIIC.README)...' >> /etc/bash.bashrc && \
+    echo 'gagpiic () {' >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/piic-exe-$release" >> /etc/bash.bashrc && \
+    echo "'export GAG_EXEC_SYSTEM=x86_64-generic" >> /etc/bash.bashrc && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
+    echo '}' >> /etc/bash.bashrc && \
+    echo 'gaggildas () {' >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/gildas-exe-$release >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
+    echo '}' >> /etc/bash.bashrc
