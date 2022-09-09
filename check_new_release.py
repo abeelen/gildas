@@ -6,8 +6,8 @@ from bs4 import BeautifulSoup
 from gildas_release import gildas_release
 
 s = requests.Session()
-r = s.get('https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags')
-tags = [item['name'] for item in r.json() if item['name'] not in ['latest', 'build']]
+r = s.get('https://registry.hub.docker.com/v2/repositories/abeelen/gildas/tags/?page_size=1000')
+tags = [item['name'] for item in r.json()['results'] if item['name'] not in ['latest', 'build']]
 
 _gildas = gildas_release('gildas')
 _archived_gildas = gildas_release('gildas', archive=True)
@@ -29,7 +29,7 @@ def is_in_archive(release, piic=False):
         if piic is False:
             return '--build-arg ARCHIVE=1 '
         else:
-            return '-build-arg PIIC_ARCHIVE=1 '
+            return '--build-arg PIIC_ARCHIVE=1 '
     else:
         raise FileNotFoundError('gildas release not found in archive')
 
