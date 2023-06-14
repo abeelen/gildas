@@ -2,8 +2,9 @@ FROM debian:stable as gildas_worker
 RUN apt-get -y update && apt-get install -y \
     libx11-6 \
     libpng16-16 \
-    libfftw3-3 \
-    libcfitsio9 \
+    libfftw3-double3 \
+    libfftw3-single3 \
+    libcfitsio10 \
     libforms2 \
     python3 \
     python-is-python3 \
