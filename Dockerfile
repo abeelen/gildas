@@ -9,6 +9,8 @@ RUN apt-get -y update && apt-get install -y \
     python3 \
     python-is-python3 \
     python3-numpy \
+    python3-scipy \
+    python3-emcee \
     libgtk2.0
 
 FROM gildas_worker as gildas_builder
@@ -20,6 +22,8 @@ RUN apt-get -y update && apt-get install -y \
     libforms-dev \
     python3-dev \
     libgtk2.0-dev \
+    python3-setuptools \
+    python-dev-is-python3 \
     gfortran \
     curl
 
@@ -50,8 +54,9 @@ RUN . /etc/os-release && \
     echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
     echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
+CMD ["/bin/bash", "--rcfile", "/etc/bash.bashrc"]
 
-ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
+# ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
 
 
 from gildas as gildas-piic
