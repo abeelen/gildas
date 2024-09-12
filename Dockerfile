@@ -1,5 +1,5 @@
-FROM debian:stable as gildas_worker
-RUN apt-get -y update && apt-get install -y \
+FROM debian:stable-slim AS gildas_worker
+RUN apt-get -y update && apt-get install -y  \
     libx11-6 \
     libpng16-16 \
     libfftw3-double3 \
@@ -11,9 +11,13 @@ RUN apt-get -y update && apt-get install -y \
     python3-numpy \
     python3-scipy \
     python3-emcee \
-    libgtk2.0
+    ipython3 \
+    python3-ipython \
+    libgtk2.0 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-FROM gildas_worker as gildas_builder
+FROM gildas_worker AS gildas_builder
 RUN apt-get -y update && apt-get install -y \
     libx11-dev \
     libpng-dev \
@@ -25,10 +29,14 @@ RUN apt-get -y update && apt-get install -y \
     python3-setuptools \
     python-dev-is-python3 \
     gfortran \
-    curl
+    curl && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 
-FROM gildas_builder as builder
+
+
+FROM gildas_builder AS builder
 ARG release
 ENV release=${release}
 ARG ARCHIVE
@@ -44,7 +52,7 @@ RUN curl $GILDAS_URL/gildas-src-$release.tar.xz | tar xJ && \
     cd gildas-exe-$release && curl $GILDAS_URL/gildas-doc-$release.tar.xz | tar xJ
 
 
-FROM gildas_worker as gildas
+FROM gildas_worker AS gildas
 ARG release
 ENV release=${release}
 COPY --from=builder /gildas-exe-$release /gildas-exe-$release
@@ -58,7 +66,7 @@ RUN . /etc/os-release && \
 ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
 
 
-from gildas as gildas-piic
+FROM gildas AS gildas-piic
 COPY --from=builder /etc/bash.bashrc /etc/bash.bashrc
 ARG PIIC_ARCHIVE
 # if --build-arg ARCHIVE=1 set the url to the archive page
@@ -71,7 +79,7 @@ RUN . /etc/os-release && \
     echo '# Two separate gildas environement (PIIC.README)...' >> /etc/bash.bashrc && \
     echo 'gagpiic () {' >> /etc/bash.bashrc && \
     echo "export GAG_ROOT_DIR=/piic-exe-$release" >> /etc/bash.bashrc && \
-    echo "'export GAG_EXEC_SYSTEM=x86_64-generic" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-generic" >> /etc/bash.bashrc && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
     echo '}' >> /etc/bash.bashrc && \
     echo 'gaggildas () {' >> /etc/bash.bashrc && \

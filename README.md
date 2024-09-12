@@ -1,4 +1,18 @@
-# Usage
+# Usage with Singularity
+
+You can simply run any of the gildas application with:
+
+```bash
+singularity run docker://abeelen/gildas:latest {application}
+```
+
+or, if you want to use piic
+```bash
+singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
+```
+
+
+# Usage with docker
 
 To launch the gildas container, type :
 
@@ -74,6 +88,7 @@ alias astro='gildas_docker astro'
 [...]
 alias imager='gildas_docker imager"'
 ```
+
 
 # Build
 
