@@ -1,3 +1,13 @@
+
+This is a docker container of the [IRAM/gildas](https://www.iram.fr/IRAMFR/GILDAS/) software suite.
+
+You can find many tags corresponding to several release version of the software. Alternatively you can use the `latest` or `piic-latest` tag to use the most update version of the software on this repository.
+
+They are two main branches/tag lines with regular release tag or the `*-piic` tag containing the `piic` software.
+
+
+You can use it either with docker or simply with singularity.
+
 # Usage with Singularity
 
 You can simply run any of the gildas application with:
@@ -12,7 +22,7 @@ singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
 ```
 
 
-# Usage with docker
+# Usage with Docker
 
 To launch the gildas container, type :
 
