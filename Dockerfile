@@ -1,5 +1,5 @@
 FROM debian:stable-slim AS gildas_worker
-RUN apt-get -y update && apt-get install -y  \
+RUN apt-get -y update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libpng16-16 \
     libfftw3-double3 \
@@ -11,25 +11,37 @@ RUN apt-get -y update && apt-get install -y  \
     python3-numpy \
     python3-scipy \
     python3-emcee \
+    python3-matplotlib \
     ipython3 \
     python3-ipython \
-    libgtk2.0 && \
+    libgtk2.0 \
+    # for the pipeline
+    texlive \
+    ghostscript \
+    && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 FROM gildas_worker AS gildas_builder
-RUN apt-get -y update && apt-get install -y \
+RUN apt-get -y update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    xz-utils \
+    make \
+    gcc \
+    g++ \
+    gfortran \
     libx11-dev \
     libpng-dev \
     libfftw3-dev \
     libcfitsio-dev \
     libforms-dev \
+    libssl-dev \
     python3-dev \
     libgtk2.0-dev \
+    groff-base \
     python3-setuptools \
-    python-dev-is-python3 \
-    gfortran \
-    curl && \
+    python-dev-is-python3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -44,10 +56,11 @@ ARG ARCHIVE
 ENV GILDAS_URL=${ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/gildas}
 # else keep the main directory
 ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
+ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-yes}
 CMD sh -c 
 RUN curl $GILDAS_URL/gildas-src-$release.tar.xz | tar xJ && \
     bash -c "cd gildas-src-$release && GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
-    make && make -j 16 install" && \
+    make -j 16 && make install" && \
     rm -Rf gildas-src-$release && \
     cd gildas-exe-$release && curl $GILDAS_URL/gildas-doc-$release.tar.xz | tar xJ
 

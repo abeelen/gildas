@@ -40,11 +40,12 @@ for release in _archived_gildas + _gildas:
     if release not in tags:
         print("# * {} not in dockerhub".format(release))
         cmd = "export release={}; ".format(release)
-        cmd += "docker build --tag abeelen/gildas:${release} "
+        cmd += "docker build --tag abeelen/gildas:${release} --tag abeelen/gildas:latest "
         cmd += "--target gildas "
         cmd += is_in_archive(release)
         cmd += "--build-arg release=$release -f Dockerfile . "
-        cmd += "&& docker push abeelen/gildas:${release}"
+        cmd += "&& docker push abeelen/gildas:${release} "
+        cmd += "&& docker push abeelen/gildas:latest "
         print(cmd)
 
 # Force with PIIC
@@ -59,10 +60,11 @@ for release in _archived_piic + _piic:
 
     print("# * {} not in dockerhub launch :".format(release))
     cmd = "export release={}; ".format(release)
-    cmd += "docker build --tag abeelen/gildas:${release}-piic "
+    cmd += "docker build --tag abeelen/gildas:${release}-piic --tag abeelen/gildas:latest-piic "
     cmd += "--target gildas-piic "
     cmd += is_in_archive(release) + is_in_archive(release, piic=True)
 
     cmd += "--build-arg release=$release -f Dockerfile . "
-    cmd += "&& docker push abeelen/gildas:${release}-piic"
+    cmd += "&& docker push abeelen/gildas:${release}-piic "
+    cmd += "&& docker push abeelen/gildas:latest-piic "
     print(cmd)
