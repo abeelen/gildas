@@ -93,7 +93,7 @@ RUN . /etc/os-release && \
     echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
 
-ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "c"]
+ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
 
 
 FROM gildas AS gildas-piic
