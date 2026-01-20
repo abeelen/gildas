@@ -1,4 +1,7 @@
 FROM debian:stable-slim AS gildas_worker
+
+ARG DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get -y update && apt-get install -y --no-install-recommends \
     libx11-6 \
     libpng16-16 \
@@ -6,7 +9,12 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
     libfftw3-single3 \
     libcfitsio10 \
     libforms2 \
+    # new packages 25... \
+    libasan8 \
+    libubsan1 \
+    # python modules
     python3 \
+    libpython3.13 \
     python-is-python3 \
     python3-numpy \
     python3-scipy \
@@ -18,11 +26,14 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
     # for the pipeline
     texlive \
     ghostscript \
-    && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 
 FROM gildas_worker AS gildas_builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
 RUN apt-get -y update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -41,53 +52,63 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
     libgtk2.0-dev \
     groff-base \
     python3-setuptools \
-    python-dev-is-python3 && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-
+    python-dev-is-python3 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 
 FROM gildas_builder AS builder
+
 ARG release
 ENV release=${release}
-ARG ARCHIVE
-# if --build-arg ARCHIVE=1 set the url to the archive page
-ENV GILDAS_URL=${ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/gildas}
-# else keep the main directory
-ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
-ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-yes}
-CMD sh -c 
-RUN curl $GILDAS_URL/gildas-src-$release.tar.xz | tar xJ && \
-    bash -c "cd gildas-src-$release && GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
-    make -j 16 && make install" && \
-    rm -Rf gildas-src-$release && \
-    cd gildas-exe-$release && curl $GILDAS_URL/gildas-doc-$release.tar.xz | tar xJ
 
+# Base URL for GILDAS (can be overridden at build time)
+ARG GILDAS_URL=https://www.iram.fr/~gildas/dist
+ENV GILDAS_URL=$GILDAS_URL
+
+# SANATIZE option cause crashes
+ARG GAG_USE_SANITIZE
+ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
+
+ARG MAKE_JOBS=8
+
+WORKDIR /
+
+RUN curl "$GILDAS_URL/gildas-src-$release.tar.xz" | tar xJ && \
+    bash -c "cd gildas-src-$release && GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && make -j ${MAKE_JOBS} && make install" && \
+    rm -Rf "gildas-src-$release" && cd "gildas-exe-$release" && curl "$GILDAS_URL/gildas-doc-$release.tar.xz" | tar xJ
 
 FROM gildas_worker AS gildas
+
 ARG release
 ENV release=${release}
+
 COPY --from=builder /gildas-exe-$release /gildas-exe-$release
+
 SHELL ["/bin/bash", "-c"]
+
 RUN . /etc/os-release && \
     echo "# Gildas" >> /etc/bash.bashrc && \
     echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
     echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
-# CMD ["/bin/bash", "--rcfile", "/etc/bash.bashrc"]
-ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
+
+ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "c"]
 
 
 FROM gildas AS gildas-piic
+
 COPY --from=builder /etc/bash.bashrc /etc/bash.bashrc
-ARG PIIC_ARCHIVE
-# if --build-arg ARCHIVE=1 set the url to the archive page
-ENV GILDAS_URL=${PIIC_ARCHIVE:+https://www.iram.fr/~gildas/dist/archive/piic}
-# else keep the main directory
-ENV GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
-RUN curl $GILDAS_URL/piic-exe-$release.tar.xz | tar xJ; exit 0
+
+ARG PIIC_URL=https://www.iram.fr/~gildas/dist
+ENV GILDAS_URL=$PIIC_URL
+
+WORKDIR /
+
+RUN curl "$GILDAS_URL/piic-exe-$release.tar.xz" | tar xJ || true
+
 SHELL ["/bin/bash", "-c"]
+
 RUN . /etc/os-release && \
     echo '# Two separate gildas environement (PIIC.README)...' >> /etc/bash.bashrc && \
     echo 'gagpiic () {' >> /etc/bash.bashrc && \

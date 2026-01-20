@@ -27,9 +27,12 @@ singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
 To launch the gildas container, type :
 
 ```bash
+xhost +SI:localuser:$(id -un)
 docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
-       --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER} --env DISPLAY=${DISPLAY} \
+       --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER}
+       --env DISPLAY=${DISPLAY} --env WAYLAND_DISPLAY=${WAYLAND_DISPLAY} \
+       --env XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR} --env XAUTHORITY=${XAUTHORITY} \
        --volume "/etc/passwd:/etc/passwd:ro" \
        --volume "/home/$USER:/home/$USER" \
        --volume "/Users/$USER:/Users/$USER" \
@@ -61,14 +64,19 @@ Starting from the oct19a, one has to define which gildas environement to use eit
 It is easier to create usefull aliases in `~/.bashrc`
 
 ```bash
-
+# With PIIC
 alias gildas_docker='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
-       --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER} --env DISPLAY=${DISPLAY} \
+       --workdir="$HOME" \
+       --env HOME="$HOME" --env USER="$USER" \
+       --env DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env XDG_RUNTIME_DIR \
+       --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
-       --volume "/home/$USER:/home/$USER" \
-       --volume "/Users/$USER:/Users/$USER" \
+       --volume "$HOME:$HOME" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
+       --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest-piic'
 
 alias clic='gildas_docker "gaggildas; clic"'
@@ -82,21 +90,26 @@ alias imager='gildas_docker "gaggildas; imager"'
 Alternatively if you do not need PIIC,
 
 ```bash
-
-alias gildas_docker='docker run -it \
+# Without PIIC
+alias gildas_docker_nopiic='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
-       --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER} --env DISPLAY=${DISPLAY} \
+       --workdir="$HOME" \
+       --env HOME="$HOME" --env USER="$USER" \
+       --env DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env XDG_RUNTIME_DIR \
+       --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
-       --volume "/home/$USER:/home/$USER" \
-       --volume "/Users/$USER:/Users/$USER" \
+       --volume "$HOME:$HOME" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
+       --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest'
 
-alias clic='gildas_docker clic'
-alias mapping='gildas_docker mapping'
-alias astro='gildas_docker astro'
+alias clic='gildas_docker_nopiic clic'
+alias mapping='gildas_docker_nopiic mapping'
+alias astro='gildas_docker_nopiic astro'
 [...]
-alias imager='gildas_docker imager"'
+alias imager='gildas_docker_nopiic imager'
 ```
 
 
@@ -110,20 +123,39 @@ alias imager='gildas_docker imager"'
 With Docker 17.05 or higher :
 
 ```bash
-export release=mar18c
-docker build --tag abeelen/gildas:$release --tag abeelen/gildas:latest --build-arg release=$release -f Dockerfile .
+export release=jan26a
+docker build \
+       --tag abeelen/gildas:${release} \
+       --tag abeelen/gildas:latest \
+       --target gildas \
+       --build-arg release=${release} \
+       -f Dockerfile .
 ```
 
 ## PIIC
 
-Starting with oct19a, PIIC is included in the container, with 2 possible arguments, `ARCHIVE=1` will look for gildas in the archive , while `PIIC_ARCHIVE`, will look for piic in the archive
+Starting with oct19a, PIIC is included in the container. The multi-stage
+`Dockerfile` provides two main targets:
+
+- `gildas` : image without PIIC
+- `gildas-piic` : image including PIIC
+
+To build the PIIC image for a given release:
 
 ```bash
-export release=oct19a
-docker build --tag abeelen/gildas:${release} --tag abeelen/gildas:latest --build-arg ARCHIVE=1 --build-arg release=$release -f Dockerfile .
+export release=jan26a
+docker build \
+       --tag abeelen/gildas:${release}-piic \
+       --tag abeelen/gildas:latest-piic \
+       --target gildas-piic \
+       --build-arg release=${release} \
+       -f Dockerfile .
 ```
-will look for gildas oct19a in the archive, while PIIC will be downloaded from the regular directory
 
+The default build uses the main GILDAS distribution URLs. For archived
+releases, the helper script `gildas_release.py` (see below) will
+generate the appropriate `--build-arg GILDAS_URL=...` and
+`--build-arg PIIC_URL=...` options to point to the archive trees.
 
 `Dockerfile` for this project are available at https://git.ias.u-psud.fr/abeelen/gildas
 
@@ -133,12 +165,31 @@ will look for gildas oct19a in the archive, while PIIC will be downloaded from t
 curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags' | sed -e 's/[][]//g' -e 's/"//g' -e 's/ //g' | tr '}' '\n'  | awk -F: '{print $3}'
 ```
 
-on the gildas page : 
+## Helper script for releases and builds
+
+The script `gildas_release.py` inspects the IRAM GILDAS/PIIC download
+directories and the Docker Hub tags for `abeelen/gildas`, then prints
+ready-to-run `docker build` / `docker push` commands.
+
+Typical usage:
+
 ```bash
-# to get the gildas release
-./_gildas_release.py
-# to get the piic release
-./gildas_release.py --package piic
-# To look in the archive directory
-./gildas_release.py --archive
+# List build commands for all missing releases (GILDAS and PIIC),
+# ordered from oldest to newest
+./gildas_release.py
+
+# Same, but including releases that are already present on Docker Hub
+./gildas_release.py --force
+
+# Commands for a single release (and its -piic variant if available)
+./gildas_release.py --release jan26a
 ```
+
+In all cases, the script emits commands for both the `gildas` and
+`gildas-piic` targets when the corresponding tarballs exist upstream,
+and adds the correct `GILDAS_URL` / `PIIC_URL` archive URLs when
+necessary.
+
+The legacy wrapper `check_new_release.py` is kept for backward
+compatibility; it simply calls the default behaviour of
+`gildas_release.py`.
