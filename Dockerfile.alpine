@@ -1,0 +1,125 @@
+FROM alpine:edge AS gildas_worker
+
+# This Dockerfile builds Alpine-based variants of the abeelen/gildas images.
+#
+# Recommended tags when building:
+#   docker build -f Dockerfile.alpine \
+#     --target gildas \
+#     --build-arg release=jan26a \
+#     -t abeelen/gildas:jan26a-alpine .
+#
+#   docker build -f Dockerfile.alpine \
+#     --target gildas-piic \
+#     --build-arg release=jan26a \
+#     -t abeelen/gildas:jan26a-piic-alpine .
+#
+# You can also define "latest-alpine" / "latest-piic-alpine" tags in the
+# same way if you want to distinguish Alpine images from the Debian-based
+# ones built from Dockerfile.
+
+RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
+    apk add --no-cache \
+    bash \
+    libx11 \
+    libpng \
+    fftw \
+    gtk+2.0 \
+    python3 \
+    py3-pip \
+    py3-numpy \
+    cfitsio@testing \
+    libgomp \
+    gcompat
+
+
+FROM gildas_worker AS gildas_builder
+
+RUN apk add --no-cache \
+    libx11-dev \
+    libpng-dev \
+    fftw-dev \
+    cfitsio-dev@testing \
+    python3-dev \
+    gtk+2.0-dev \
+    gfortran \
+    groff \
+    curl \
+    build-base \
+    linux-headers
+
+
+FROM gildas_builder AS builder
+
+ARG release
+ENV release=${release}
+
+# Base URL for GILDAS (can be overridden at build time)
+ARG GILDAS_URL=https://www.iram.fr/~gildas/dist
+ENV GILDAS_URL=$GILDAS_URL
+
+# SANITIZE option can trigger crashes; keep disabled by default
+ARG GAG_USE_SANITIZE
+ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
+
+ARG MAKE_JOBS=8
+
+WORKDIR /
+
+RUN curl "$GILDAS_URL/gildas-src-$release.tar.xz" | tar xJ && \
+    bash -c "cd gildas-src-$release && \
+    GAG_SEARCH_PATH=/usr/lib source admin/gildas-env.sh -o openmp && \
+    sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
+    sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
+    sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
+    sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
+    sed -i 's|<sys/unistd.h>|<unistd.h>|' kernel/lib/gtv/xsub.c && \
+    sed -i s'/__sighandler_t sic_sighandler_t/void \(\* sic_sighandler_t\)\(int\)/' kernel/lib/gcore/gcomm.h && \
+    make -j ${MAKE_JOBS} && make install" && \
+    rm -Rf "gildas-src-$release" && \
+    cd "gildas-exe-$release" && curl "$GILDAS_URL/gildas-doc-$release.tar.xz" | tar xJ
+
+
+FROM gildas_worker AS gildas
+
+ARG release
+ENV release=${release}
+
+COPY --from=builder /gildas-exe-$release /gildas-exe-$release
+
+SHELL ["/bin/bash", "-c"]
+
+RUN . /etc/os-release && \
+    echo "# Gildas" >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
+
+ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
+
+
+FROM gildas AS gildas-piic
+
+COPY --from=builder /etc/bash.bashrc /etc/bash.bashrc
+
+ARG PIIC_URL=https://www.iram.fr/~gildas/dist
+ENV GILDAS_URL=$PIIC_URL
+
+WORKDIR /
+
+RUN curl "$GILDAS_URL/piic-exe-$release.tar.xz" | tar xJ || true
+
+SHELL ["/bin/bash", "-c"]
+
+RUN . /etc/os-release && \
+    echo '# Two separate gildas environement (PIIC.README)...' >> /etc/bash.bashrc && \
+    echo 'gagpiic () {' >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/piic-exe-$release" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-generic" >> /etc/bash.bashrc && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
+    echo '}' >> /etc/bash.bashrc && \
+    echo 'gaggildas () {' >> /etc/bash.bashrc && \
+    echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc && \
+    echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
+    echo '}' >> /etc/bash.bashrc
+

@@ -1,0 +1,65 @@
+Bootstrap: docker
+From: abeelen/gildas:latest
+
+%labels
+    Author abeelen
+    Description "GILDAS Singularity image bootstrapped from abeelen/gildas:latest"
+
+%environment
+    # Use bash as default shell. The container's /etc/bash.bashrc,
+    # configured in the Docker image, will be sourced automatically
+    # by interactive bash shells, so we don't force BASH_ENV here.
+    export SINGULARITY_SHELL=/bin/bash
+
+%runscript
+    # Behave like the Docker ENTRYPOINT, explicitly using the
+    # container's /etc/bash.bashrc so that the GILDAS environment
+    # (GAG_ROOT_DIR, GAG_EXEC_SYSTEM, PATH, aliases, etc.) is always set.
+    if [ "$#" -eq 0 ]; then
+        exec /bin/bash --rcfile /etc/bash.bashrc -i
+    else
+        exec /bin/bash --rcfile /etc/bash.bashrc -i -c "$*"
+    fi
+
+%apprun astro
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "astro"
+
+%apprun clic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "clic"
+
+%apprun flux
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "flux"
+
+%apprun hershey
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "hershey"
+
+%apprun orbit
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "orbit"
+
+%apprun classic-read
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "classic-read"
+
+%apprun point
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "point"
+
+%apprun class
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "class"
+
+%apprun cube
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "cube"
+
+%apprun mapping
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "mapping"
+
+%apprun sic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "sic"
+
+%apprun greg
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "greg"
+
+%apprun imager
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "imager"
+
+%apprun piic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "gagpiic; piic"
+

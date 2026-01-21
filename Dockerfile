@@ -90,7 +90,7 @@ SHELL ["/bin/bash", "-c"]
 RUN . /etc/os-release && \
     echo "# Gildas" >> /etc/bash.bashrc && \
     echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
-    echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc  && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc
 
 ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
@@ -118,6 +118,6 @@ RUN . /etc/os-release && \
     echo '}' >> /etc/bash.bashrc && \
     echo 'gaggildas () {' >> /etc/bash.bashrc && \
     echo "export GAG_ROOT_DIR=/gildas-exe-$release" >> /etc/bash.bashrc && \
-    echo "export GAG_EXEC_SYSTEM=x86_64-debian${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc && \
+    echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp" >> /etc/bash.bashrc && \
     echo '. $GAG_ROOT_DIR/etc/bash_profile' >> /etc/bash.bashrc && \
     echo '}' >> /etc/bash.bashrc

@@ -222,7 +222,12 @@ def _load_release_sets() -> ReleaseSets:
     )
 
 
-def build_without_piic_command(gildas: Sequence[str], archived_gildas: Sequence[str], release: str) -> str:
+def build_without_piic_command(
+    gildas: Sequence[str],
+    archived_gildas: Sequence[str],
+    release: str,
+    dockerfile: str = "Dockerfile",
+) -> str:
     """Build docker commands for a GILDAS-only release.
 
     Parameters
@@ -248,17 +253,26 @@ def build_without_piic_command(gildas: Sequence[str], archived_gildas: Sequence[
         archive_url=GILDAS_ARCHIVE_URL,
         package_name="gildas",
     )
+
+    is_alpine = dockerfile.endswith("alpine")
+    if is_alpine:
+        main_tag = "${release}-alpine"
+        latest_tag = "latest-alpine"
+    else:
+        main_tag = "${release}"
+        latest_tag = "latest"
+
     parts = [
         f"export release={release};",
         "docker build",
-        "--tag abeelen/gildas:${release}",
-        "--tag abeelen/gildas:latest",
+        f"--tag abeelen/gildas:{main_tag}",
+        f"--tag abeelen/gildas:{latest_tag}",
         "--target gildas",
         arg,
         "--build-arg release=$release",
-        "-f Dockerfile .",
-        "&& docker push abeelen/gildas:${release}",
-        "&& docker push abeelen/gildas:latest",
+        f"-f {dockerfile} .",
+        f"&& docker push abeelen/gildas:{main_tag}",
+        f"&& docker push abeelen/gildas:{latest_tag}",
     ]
     return " ".join(parts)
 
@@ -269,6 +283,7 @@ def build_with_piic_command(
     piic: Sequence[str],
     archived_piic: Sequence[str],
     release: str,
+    dockerfile: str = "Dockerfile",
 ) -> str | None:
     """Build docker commands for a combined GILDAS+PIIC release.
 
@@ -321,18 +336,26 @@ def build_with_piic_command(
         logger.warning("Skipping PIIC build for %s (no PIIC archive): %s", release, exc)
         return None
 
+    is_alpine = dockerfile.endswith("alpine")
+    if is_alpine:
+        main_tag = "${release}-piic-alpine"
+        latest_tag = "latest-piic-alpine"
+    else:
+        main_tag = "${release}-piic"
+        latest_tag = "latest-piic"
+
     parts = [
         f"export release={release};",
         "docker build",
-        "--tag abeelen/gildas:${release}-piic",
-        "--tag abeelen/gildas:latest-piic",
+        f"--tag abeelen/gildas:{main_tag}",
+        f"--tag abeelen/gildas:{latest_tag}",
         "--target gildas-piic",
         g_arg,
         p_arg,
         "--build-arg release=$release",
-        "-f Dockerfile .",
-        "&& docker push abeelen/gildas:${release}-piic",
-        "&& docker push abeelen/gildas:latest-piic",
+        f"-f {dockerfile} .",
+        f"&& docker push abeelen/gildas:{main_tag}",
+        f"&& docker push abeelen/gildas:{latest_tag}",
     ]
     return " ".join(parts)
 
@@ -345,9 +368,14 @@ class BuildCommand:
     release: str
     in_dockerhub: bool
     command: str
+    alpine: bool = False
 
 
-def get_release_build_commands(release_name: str, missing_only: bool = False) -> List[BuildCommand]:
+def get_release_build_commands(
+    release_name: str,
+    missing_only: bool = False,
+    dockerfile: str = "Dockerfile",
+) -> List[BuildCommand]:
     """Return docker commands for a specific release.
 
     Parameters
@@ -377,10 +405,13 @@ def get_release_build_commands(release_name: str, missing_only: bool = False) ->
 
     commands: List[BuildCommand] = []
 
+    is_alpine = dockerfile.endswith("alpine")
+
     # GILDAS only
     if release_name in gildas or release_name in archived_gildas:
-        command = build_without_piic_command(gildas, archived_gildas, release_name)
-        in_dockerhub = release_name in tags
+        command = build_without_piic_command(gildas, archived_gildas, release_name, dockerfile=dockerfile)
+        base_tag = f"{release_name}-alpine" if is_alpine else release_name
+        in_dockerhub = base_tag in tags
 
         if not missing_only or not in_dockerhub:
             commands.append(
@@ -389,14 +420,22 @@ def get_release_build_commands(release_name: str, missing_only: bool = False) ->
                     release=release_name,
                     in_dockerhub=in_dockerhub,
                     command=command,
+                    alpine=is_alpine,
                 )
             )
 
     # GILDAS + PIIC
     if release_name in piic or release_name in archived_piic:
-        command = build_with_piic_command(gildas, archived_gildas, piic, archived_piic, release_name)
+        command = build_with_piic_command(
+            gildas,
+            archived_gildas,
+            piic,
+            archived_piic,
+            release_name,
+            dockerfile=dockerfile,
+        )
         if command:
-            piic_tag = f"{release_name}-piic"
+            piic_tag = f"{release_name}-piic-alpine" if is_alpine else f"{release_name}-piic"
             in_dockerhub = piic_tag in tags
 
             if not missing_only or not in_dockerhub:
@@ -406,13 +445,14 @@ def get_release_build_commands(release_name: str, missing_only: bool = False) ->
                         release=release_name,
                         in_dockerhub=in_dockerhub,
                         command=command,
+                        alpine=is_alpine,
                     )
                 )
 
     return commands
 
 
-def get_build_commands(missing_only: bool = False) -> List[BuildCommand]:
+def get_build_commands(missing_only: bool = False, dockerfile: str = "Dockerfile") -> List[BuildCommand]:
     """Return docker commands for all known releases.
 
     Parameters
@@ -434,7 +474,9 @@ def get_build_commands(missing_only: bool = False) -> List[BuildCommand]:
     commands: List[BuildCommand] = []
 
     for release in all_releases:
-        commands.extend(get_release_build_commands(release, missing_only=missing_only))
+        commands.extend(
+            get_release_build_commands(release, missing_only=missing_only, dockerfile=dockerfile)
+        )
 
     return commands
 
@@ -443,12 +485,13 @@ def _format_comment(cmd: BuildCommand) -> str:
     """Return a human-readable comment line for a build command."""
 
     if cmd.section == SECTION_WITHOUT_PIIC:
+        tag = f"{cmd.release}-alpine" if cmd.alpine else cmd.release
         if cmd.in_dockerhub:
-            return f"# * {cmd.release} already in dockerhub :"
-        return f"# * {cmd.release} not in dockerhub"
+            return f"# * {tag} already in dockerhub :"
+        return f"# * {tag} not in dockerhub"
 
     if cmd.section == SECTION_WITH_PIIC:
-        tag = f"{cmd.release}-piic"
+        tag = f"{cmd.release}-piic-alpine" if cmd.alpine else f"{cmd.release}-piic"
         if cmd.in_dockerhub:
             return f"# * {tag} already in dockerhub :"
         return f"# * {tag} not in dockerhub launch :"
@@ -456,7 +499,7 @@ def _format_comment(cmd: BuildCommand) -> str:
     return f"# * {cmd.release}"
 
 
-def print_missing_build_commands(force: bool = False) -> None:
+def print_missing_build_commands(force: bool = False, dockerfile: str = "Dockerfile") -> None:
     """Print docker commands for missing releases.
 
     The function inspects available tarballs on the IRAM website and tags
@@ -466,7 +509,7 @@ def print_missing_build_commands(force: bool = False) -> None:
     they already have tags on Docker Hub.
     """
 
-    commands = get_build_commands(missing_only=not force)
+    commands = get_build_commands(missing_only=not force, dockerfile=dockerfile)
 
     without_piic = sorted(
         [cmd for cmd in commands if cmd.section == SECTION_WITHOUT_PIIC],
@@ -508,7 +551,17 @@ def print_missing_build_commands(force: bool = False) -> None:
     is_flag=True,
     help="Include releases already present on Docker Hub when listing all.",
 )
-def main(release_name: str | None = None, verbose: bool = False, force: bool = False) -> None:
+@click.option(
+    "--alpine",
+    is_flag=True,
+    help="Utiliser l'image basee sur Dockerfile.alpine.",
+)
+def main(
+    release_name: str | None = None,
+    verbose: bool = False,
+    force: bool = False,
+    alpine: bool = False,
+) -> None:
     """Command-line entry point.
 
     Parameters
@@ -533,12 +586,14 @@ def main(release_name: str | None = None, verbose: bool = False, force: bool = F
         format="%(levelname)s:%(name)s:%(message)s",
     )
 
+    dockerfile = "Dockerfile.alpine" if alpine else "Dockerfile"
+
     if not release_name:
-        print_missing_build_commands(force=force)
+        print_missing_build_commands(force=force, dockerfile=dockerfile)
         return
 
     # Single release mode
-    commands = get_release_build_commands(release_name)
+    commands = get_release_build_commands(release_name, dockerfile=dockerfile)
 
     if any(cmd.section == SECTION_WITHOUT_PIIC for cmd in commands):
         print("# Without piic")
