@@ -11,7 +11,7 @@ You can use it either with Docker or simply with Singularity.
 
 ```bash
 # Singularity, GILDAS without PIIC (latest Debian-based image)
-       singularity run docker://abeelen/gildas:latest mapping
+singularity run docker://abeelen/gildas:latest mapping
 
 # Singularity, GILDAS with PIIC
 singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
@@ -23,7 +23,7 @@ docker run --rm -it abeelen/gildas:latest mapping
 docker run --rm -it abeelen/gildas:latest-piic "gagpiic; piic"
 ```
 
-## Tags overview
+## Docker tags overview
 
 | Tag example             | Base   | Content       | Notes                         |
 |-------------------------|--------|---------------|-------------------------------|
