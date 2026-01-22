@@ -52,7 +52,8 @@ singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
 ```
 
 You can also build a native Singularity image (SIF) from the Docker
-image or from the provided definition file `gildas-latest.def`.
+image or from one of the provided definition files (`gildas-latest.def`
+or `gildas-natif.def`).
 
 ```bash
 # Build a SIF directly from the Docker image on Docker Hub
@@ -60,6 +61,13 @@ singularity build gildas-latest.sif docker://abeelen/gildas:latest
 
 # Or, using the Singularity definition file (keeps custom apprun entries)
 singularity build gildas-latest.sif gildas-latest.def
+
+# Native build from tarballs (no Docker involved), with configurable
+# release and URLs (see %environment in gildas-natif.def)
+export GILDAS_RELEASE=jan26a
+export GILDAS_URL=https://www.iram.fr/~gildas/dist
+export PIIC_URL=https://www.iram.fr/~gildas/dist
+sudo singularity build gildas-${GILDAS_RELEASE}-natif.sif gildas-natif.def
 
 # Then, run interactively (GILDAS shell)
 singularity shell gildas-latest.sif
@@ -72,6 +80,7 @@ singularity run --app astro   gildas-latest.sif
 singularity run --app class   gildas-latest.sif
 singularity run --app clic    gildas-latest.sif
 singularity run --app imager  gildas-latest.sif
+singularity run --app mapping gildas-latest.sif
 singularity run --app piic    gildas-latest.sif
 ```
 

@@ -1,0 +1,182 @@
+Bootstrap: docker
+From: debian:stable-slim
+
+%labels
+    Author abeelen
+    Description "Native Singularity image building GILDAS from official tarballs"
+
+%environment
+    # Default runtime environment (can be overridden at build time via env vars)
+    export GILDAS_RELEASE=${GILDAS_RELEASE:-jan26a}
+    export GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
+    export PIIC_URL=${PIIC_URL:-https://www.iram.fr/~gildas/dist}
+    export GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
+    export MAKE_JOBS=${MAKE_JOBS:-8}
+    export SINGULARITY_SHELL=/bin/bash
+
+%post
+    set -e
+
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Defaults for build-time environment variables. Note that the
+    # %environment section is only used at runtime, so we must set
+    # sensible defaults again here for the build stage.
+    : "${GILDAS_RELEASE:=jan26a}"
+    : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
+    : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"
+    : "${GAG_USE_SANITIZE:=no}"
+    : "${MAKE_JOBS:=8}"
+
+    # Runtime dependencies
+    apt-get -y update && apt-get install -y --no-install-recommends \
+        bash \
+        libx11-6 \
+        libpng16-16 \
+        libfftw3-double3 \
+        libfftw3-single3 \
+        libcfitsio10 \
+        libforms2 \
+        libasan8 \
+        libubsan1 \
+        python3 \
+        libpython3.13 \
+        python-is-python3 \
+        python3-numpy \
+        python3-scipy \
+        python3-emcee \
+        python3-matplotlib \
+        ipython3 \
+        python3-ipython \
+        libgtk2.0 \
+        texlive \
+        ghostscript \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Build dependencies
+    apt-get -y update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        xz-utils \
+        make \
+        gcc \
+        g++ \
+        gfortran \
+        libx11-dev \
+        libpng-dev \
+        libfftw3-dev \
+        libcfitsio-dev \
+        libforms-dev \
+        libssl-dev \
+        python3-dev \
+        libgtk2.0-dev \
+        groff-base \
+        python3-setuptools \
+        python-dev-is-python3 \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Build and install GILDAS
+    release="${GILDAS_RELEASE}"
+    gildas_url="${GILDAS_URL}"
+    piic_url="${PIIC_URL}"
+    make_jobs="${MAKE_JOBS}"
+
+    cd /
+    curl "${gildas_url}/gildas-src-${release}.tar.xz" | tar xJ
+
+    bash -c "cd gildas-src-${release} && \
+        GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
+        make -j ${make_jobs} && make install"
+
+    rm -rf "gildas-src-${release}"
+
+    cd "/gildas-exe-${release}"
+    curl "${gildas_url}/gildas-doc-${release}.tar.xz" | tar xJ
+
+    # Optional PIIC installation (if tarball exists)
+    cd /
+    if curl -fsSL "${piic_url}/piic-exe-${release}.tar.xz" | tar xJ 2>/dev/null; then
+        HAVE_PIIC=1
+    else
+        HAVE_PIIC=0
+    fi
+
+    # Configure global GILDAS / PIIC environment in bash.bashrc
+    . /etc/os-release
+
+    {
+        echo "# Gildas"
+        echo "export GAG_ROOT_DIR=/gildas-exe-${release}"
+        echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp"
+        echo ". \$GAG_ROOT_DIR/etc/bash_profile"
+    } >> /etc/bash.bashrc
+
+    if [ "${HAVE_PIIC}" = "1" ]; then
+        {
+            echo '# Two separate gildas environement (PIIC.README)...'
+            echo 'gagpiic () {'
+            echo "  export GAG_ROOT_DIR=/piic-exe-${release}"
+            echo "  export GAG_EXEC_SYSTEM=x86_64-generic"
+            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
+            echo '}'
+            echo 'gaggildas () {'
+            echo "  export GAG_ROOT_DIR=/gildas-exe-${release}"
+            echo "  export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp"
+            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
+            echo '}'
+        } >> /etc/bash.bashrc
+    fi
+
+%runscript
+    # Default entrypoint: behave like the Docker ENTRYPOINT, using
+    # the container's /etc/bash.bashrc so that the GILDAS environment
+    # is always set.
+    if [ "$#" -eq 0 ]; then
+        exec /bin/bash --rcfile /etc/bash.bashrc -i
+    else
+        exec /bin/bash --rcfile /etc/bash.bashrc -i -c "$*"
+    fi
+
+%apprun astro
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "astro"
+
+%apprun clic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "clic"
+
+%apprun class
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "class"
+
+%apprun cube
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "cube"
+
+%apprun flux
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "flux"
+
+%apprun greg
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "greg"
+
+%apprun hershey
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "hershey"
+
+%apprun imager
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "imager"
+
+%apprun mapping
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "mapping"
+
+%apprun orbit
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "orbit"
+
+%apprun classic-read
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "classic-read"
+
+%apprun point
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "point"
+
+%apprun sic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "sic"
+
+%apprun piic
+    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "gagpiic; piic"
