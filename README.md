@@ -216,7 +216,7 @@ releases, the helper script `gildas_release.py` (see below) will
 generate the appropriate `--build-arg GILDAS_URL=...` and
 `--build-arg PIIC_URL=...` options to point to the archive trees.
 
-`Dockerfile` for this project are available at https://git.ias.u-psud.fr/abeelen/gildas
+`Dockerfile` for this project are available at https://github.com/abeelen/gildas.git
 
 ### Alpine-based images
 
