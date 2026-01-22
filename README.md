@@ -1,6 +1,8 @@
 
 This is a docker container of the [IRAM/gildas](https://www.iram.fr/IRAMFR/GILDAS/) software suite.
 
+Pre-built images are available on Docker Hub: https://hub.docker.com/r/abeelen/gildas
+
 You can find many tags corresponding to several release version of the software. Alternatively you can use the `latest` or `latest-piic` tag to use the most up-to-date version of the software on this repository.
 
 There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine-based variants are available with an additional `-alpine` suffix.
