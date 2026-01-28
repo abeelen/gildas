@@ -28,9 +28,14 @@ RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/ap
     python3 \
     py3-pip \
     py3-numpy \
+    py3-scipy \
+    py3-emcee \
+    py3-matplotlib \
     cfitsio@testing \
     libgomp \
     gcompat
+
+RUN pip install --no-cache-dir --break-system-packages ipython astropy
 
 
 FROM gildas_worker AS gildas_builder
@@ -93,7 +98,7 @@ RUN . /etc/os-release && \
 # Gildas
 export GAG_ROOT_DIR=/gildas-exe-$release
 export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
-. $GAG_ROOT_DIR/etc/bash_profile
+. \$GAG_ROOT_DIR/etc/bash_profile
 EOF
 
 ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
@@ -116,7 +121,7 @@ RUN . /etc/os-release && \
 gagpiic () {
     export GAG_ROOT_DIR=/piic-exe-$release
     export GAG_EXEC_SYSTEM=x86_64-generic
-    . $GAG_ROOT_DIR/etc/bash_profile
+    . \$GAG_ROOT_DIR/etc/bash_profile
 }
 gaggildas () {
     export GAG_ROOT_DIR=/gildas-exe-$release

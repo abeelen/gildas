@@ -23,6 +23,7 @@ RUN apt-get -y update && apt-get install -y --no-install-recommends \
     python3-scipy \
     python3-emcee \
     python3-matplotlib \
+    python3-astropy \
     ipython3 \
     python3-ipython \
     libgtk2.0 \
@@ -93,7 +94,7 @@ RUN . /etc/os-release && \
 # Gildas
 export GAG_ROOT_DIR=/gildas-exe-$release
 export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
-. $GAG_ROOT_DIR/etc/bash_profile
+. \$GAG_ROOT_DIR/etc/bash_profile
 EOF
 
 ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
@@ -116,11 +117,11 @@ RUN . /etc/os-release && \
 gagpiic () {
     export GAG_ROOT_DIR=/piic-exe-$release
     export GAG_EXEC_SYSTEM=x86_64-generic
-    . $GAG_ROOT_DIR/etc/bash_profile
+    . \$GAG_ROOT_DIR/etc/bash_profile
 }
 gaggildas () {
     export GAG_ROOT_DIR=/gildas-exe-$release
     export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
-    . $GAG_ROOT_DIR/etc/bash_profile
+    . \$GAG_ROOT_DIR/etc/bash_profile
 }
 EOF
