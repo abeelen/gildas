@@ -94,6 +94,7 @@ To launch the gildas container, type :
 xhost +SI:localuser:$(id -un)
 docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
+       --ipc=host \
        --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER}
        --env DISPLAY=${DISPLAY} --env WAYLAND_DISPLAY=${WAYLAND_DISPLAY} \
        --env XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR} --env XAUTHORITY=${XAUTHORITY} \
@@ -131,6 +132,7 @@ It is easier to create usefull aliases in `~/.bashrc`
 # With PIIC
 alias gildas_docker='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
+       --ipc=host \
        --workdir="$PWD" \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
@@ -159,6 +161,7 @@ Alternatively if you do not need PIIC,
 # Without PIIC
 alias gildas_docker='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
+       --ipc=host \
        --workdir="$PWD" \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
