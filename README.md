@@ -131,7 +131,7 @@ It is easier to create usefull aliases in `~/.bashrc`
 # With PIIC
 alias gildas_docker='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
-       --workdir="$HOME" \
+       --workdir="$PWD" \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
        --env WAYLAND_DISPLAY \
@@ -139,6 +139,7 @@ alias gildas_docker='docker run -it \
        --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
        --volume "$HOME:$HOME" \
+       --volume "$PWD:$PWD" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
        --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest-piic'
@@ -147,6 +148,7 @@ alias clic='gildas_docker "gaggildas; clic"'
 alias mapping='gildas_docker "gaggildas; mapping"'
 alias astro='gildas_docker "gaggildas; astro"'
 alias piic='gildas_docker "gagpiic; piic"'
+alias cube='gildas_docker "gaggildas; cube"'
 [...]
 alias imager='gildas_docker "gaggildas; imager"'
 ```
@@ -155,9 +157,9 @@ Alternatively if you do not need PIIC,
 
 ```bash
 # Without PIIC
-alias gildas_docker_nopiic='docker run -it \
+alias gildas_docker='docker run -it \
        --hostname "gildas" --user $(id -u):$(id -g) \
-       --workdir="$HOME" \
+       --workdir="$PWD" \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
        --env WAYLAND_DISPLAY \
@@ -165,15 +167,17 @@ alias gildas_docker_nopiic='docker run -it \
        --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
        --volume "$HOME:$HOME" \
+       --volume "$PWD:$PWD" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
        --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest'
 
-alias clic='gildas_docker_nopiic clic'
-alias mapping='gildas_docker_nopiic mapping'
-alias astro='gildas_docker_nopiic astro'
+alias clic='gildas_docker clic'
+alias mapping='gildas_docker mapping'
+alias astro='gildas_docker astro'
+alias cube='gildas_docker cube'
 [...]
-alias imager='gildas_docker_nopiic imager'
+alias imager='gildas_docker imager'
 ```
 
 

@@ -90,14 +90,17 @@ COPY --from=builder /gildas-exe-$release /gildas-exe-$release
 SHELL ["/bin/bash", "-c"]
 
 RUN . /etc/os-release && \
-    cat <<EOF >> /etc/bash.bashrc
-# Gildas
+    cat <<EOF > /etc/gildas-env.sh
+# Gildas base environment
 export GAG_ROOT_DIR=/gildas-exe-$release
 export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
 . \$GAG_ROOT_DIR/etc/bash_profile
 EOF
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENTRYPOINT ["/bin/bash", "--rcfile", "/etc/bash.bashrc", "-i", "-c"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["bash"]
 
 
 FROM gildas AS gildas-piic
@@ -112,7 +115,7 @@ RUN curl "$GILDAS_URL/piic-exe-$release.tar.xz" | tar xJ || true
 SHELL ["/bin/bash", "-c"]
 
 RUN . /etc/os-release && \
-        cat <<EOF >> /etc/bash.bashrc
+        cat <<EOF >> /etc/gildas-env.sh
 # Two separate gildas environement (PIIC.README)...
 gagpiic () {
     export GAG_ROOT_DIR=/piic-exe-$release
