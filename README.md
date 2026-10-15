@@ -5,7 +5,7 @@ Pre-built images are available on Docker Hub: https://hub.docker.com/r/abeelen/g
 
 You can find many tags corresponding to several release version of the software. Alternatively you can use the `latest` or `latest-piic` tag to use the most up-to-date version of the software on this repository.
 
-There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine-based variants are available with an additional `-alpine` suffix.
+There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine is the default base image; Debian-based variants carry an additional `-debian` suffix.
 
 You can use it either with Docker or simply with Singularity.
 
@@ -31,14 +31,14 @@ docker run --rm -it abeelen/gildas:latest viewer
 
 | Tag example             | Base   | Content       | Notes                         |
 |-------------------------|--------|---------------|-------------------------------|
-| `latest`                | Debian | GILDAS        | Convenience tag               |
-| `jan26a`                | Debian | GILDAS        | Specific release              |
-| `latest-piic`           | Debian | GILDAS + PIIC | Convenience tag with PIIC     |
-| `jan26a-piic`           | Debian | GILDAS + PIIC | Specific release with PIIC    |
-| `latest-alpine`         | Alpine | GILDAS        | Alpine base image             |
-| `jan26a-alpine`         | Alpine | GILDAS        | Specific release, Alpine      |
-| `latest-piic-alpine`    | Alpine | GILDAS + PIIC | Alpine base image with PIIC   |
-| `jan26a-piic-alpine`    | Alpine | GILDAS + PIIC | Specific release, Alpine+PIIC |
+| `latest`                | Alpine | GILDAS        | Convenience tag (default)     |
+| `jan26a`                | Alpine | GILDAS        | Specific release              |
+| `latest-piic`           | Alpine | GILDAS + PIIC | Convenience tag with PIIC     |
+| `jan26a-piic`           | Alpine | GILDAS + PIIC | Specific release with PIIC    |
+| `latest-debian`         | Debian | GILDAS        | Opt-in Debian base image      |
+| `jan26a-debian`         | Debian | GILDAS        | Specific release, Debian      |
+| `latest-piic-debian`    | Debian | GILDAS + PIIC | Opt-in Debian base with PIIC  |
+| `jan26a-piic-debian`    | Debian | GILDAS + PIIC | Specific release, Debian+PIIC |
 
 ## Using the images
 
@@ -64,19 +64,18 @@ Two ways to build a local SIF image (Debian or Alpine base):
 |--------|---------|------|------|
 | From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
 | Native (`gildas-natif.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `GILDAS_URL`/`PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
-| From Docker Hub, Alpine | `singularity build gildas-jan26a-alpine.sif docker://abeelen/gildas:jan26a-alpine` | fast, slim musl image | needs the `-alpine` Docker tag to exist |
+| From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
 | Native Alpine (`gildas-natif-alpine.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
 
 The helper script generates the `docker://` commands for you
-(`./gildas_release.py --singularity`, add `--alpine` for the Alpine tags).
+(`./gildas_release.py --singularity`, add `--debian` for the Debian tags).
 
 ```bash
 # Build a SIF directly from the Docker image on Docker Hub
 singularity build gildas-latest.sif docker://abeelen/gildas:latest
 
-# Or, using the Singularity definition files (keep custom apprun entries)
+# Or, using the Singularity definition file
 singularity build gildas-latest.sif gildas-latest.def
-singularity build gildas-latest-alpine.sif gildas-latest-alpine.def
 
 # Native build from tarballs (no Docker involved), with configurable
 # release and URLs (see %environment in gildas-natif.def)
@@ -96,8 +95,7 @@ singularity shell gildas-latest.sif
 # Run a specific GILDAS application via the default runscript
 singularity run gildas-latest.sif "mapping"
 
-# Or via apprun shortcuts (defined in gildas-latest.def / gildas-natif.def,
-# with -alpine variants in gildas-latest-alpine.def / gildas-natif-alpine.def)
+# Or via apprun shortcuts (defined in gildas-latest.def / gildas-natif.def)
 singularity run --app astro   gildas-latest.sif
 singularity run --app class   gildas-latest.sif
 singularity run --app clic    gildas-latest.sif
@@ -224,9 +222,12 @@ docker build \
        --target gildas \
        --build-arg release=${release} \
        --build-arg MAKE_JOBS=$(nproc) \
-       -f Dockerfile .
+       -f Dockerfile.alpine .
 # Only add --tag abeelen/gildas:latest for the newest release.
 ```
+
+(Alpine is the default; append `-debian` to the tags and use
+`-f Dockerfile` for the opt-in Debian-based images.)
 
 Build args:
 
@@ -269,9 +270,14 @@ docker build \
        --tag abeelen/gildas:${release}-piic \
        --target gildas-piic \
        --build-arg release=${release} \
-       -f Dockerfile .
+       -f Dockerfile.alpine .
 # Only add --tag abeelen/gildas:latest-piic for the newest release.
 ```
+
+PIIC releases often lag behind GILDAS ones (same release name), so the
+PIIC tarball of a given release is frequently only in the archives —
+use `./gildas_release.py --piic --archive` to list PIIC build commands
+(`--piic` alone lists PIIC commands for all known releases).
 
 The default build uses the main GILDAS distribution URLs. For archived
 releases, the helper script `gildas_release.py` (see below) will
@@ -280,50 +286,43 @@ generate the appropriate `--build-arg GILDAS_URL=...` and
 
 `Dockerfile` for this project are available at https://github.com/abeelen/gildas.git
 
-### Alpine-based images
+### Debian-based images (opt-in)
 
-In addition to the default Debian-based images built from `Dockerfile`,
-this repository also provides Alpine variants built from
-`Dockerfile.alpine` (tracking `alpine:latest`, only `cfitsio` from
-edge/testing).
-
-The recommended tags are:
+The default images are Alpine-based, built from `Dockerfile.alpine`
+(tracking `alpine:latest`, only `cfitsio` from edge/testing). Debian
+variants are built from `Dockerfile` with an additional `-debian`
+suffix:
 
 ```bash
 export release=jan26a
 
-# GILDAS only, Alpine base image
+# GILDAS only, Debian base image
 docker build \
-       --tag abeelen/gildas:${release}-alpine \
+       --tag abeelen/gildas:${release}-debian \
        --target gildas \
        --build-arg release=${release} \
-       -f Dockerfile.alpine .
+       -f Dockerfile .
 
-# GILDAS + PIIC, Alpine base image
+# GILDAS + PIIC, Debian base image
 docker build \
-       --tag abeelen/gildas:${release}-piic-alpine \
+       --tag abeelen/gildas:${release}-piic-debian \
        --target gildas-piic \
        --build-arg release=${release} \
-       -f Dockerfile.alpine .
+       -f Dockerfile .
 ```
-(`latest-alpine` / `latest-piic-alpine` should only be added for the
-newest release; `gildas_release.py` does this automatically.)
+(`latest-debian` / `latest-piic-debian` should only be added for the
+newest release; `gildas_release.py --debian` does this automatically.)
 
-The helper script `gildas_release.py` can also generate commands for the
-Alpine images using the `--alpine` toggle:
+The helper script `gildas_release.py` targets Alpine by default;
+add `--debian` for the Debian tags:
 
 ```bash
-# All missing releases (GILDAS and PIIC), Alpine variants
-./gildas_release.py --alpine
+# All missing releases (GILDAS and PIIC), Debian variants
+./gildas_release.py --debian
 
-# Single release, Alpine variants
-./gildas_release.py --release jan26a --alpine
+# Single release, Debian variants
+./gildas_release.py --release jan26a --debian
 ```
-
-When `--alpine` is used, the script produces tags with an `-alpine`
-suffix (for example `jan26a-alpine`, `jan26a-piic-alpine`, and their
-corresponding `latest-*-alpine` tags) and looks for these tags on
-Docker Hub.
 
 ### Check available tags on dockerhub
 
@@ -348,8 +347,15 @@ Typical usage:
 ./gildas_release.py --force
 
 # Also include archived releases (off by default: slower, queries the
-# archive trees)
+# archive trees; often needed for PIIC, whose releases lag behind GILDAS)
 ./gildas_release.py --archive
+
+# Only PIIC build commands. PIIC releases lag behind GILDAS ones, so
+# --piic pairs main-tree PIIC with GILDAS from main or archive;
+# add --archive to also search PIIC itself in the archives.
+./gildas_release.py --piic
+./gildas_release.py --piic --archive
+./gildas_release.py --release jul26a --piic
 
 # Commands for a single release (and its -piic variant if available).
 # Tags `latest` by default; opt out with --no-tag-latest.
@@ -359,19 +365,19 @@ Typical usage:
 # Singularity: emit `singularity build ... docker://...` commands
 # (lists all known releases, since SIFs pull from Docker Hub)
 ./gildas_release.py --singularity
-./gildas_release.py --singularity --alpine
+./gildas_release.py --singularity --debian
 ./gildas_release.py --release jan26a --singularity
 
 # Singularity, native path: emit `singularity build ... .def` commands
 # (one per release, PIIC bundled when available, archive URLs included
-# when needed — needs root or --fakeroot to run)
+# when needed — needs root or --fakeroot to run; Alpine `.def` by default)
 ./gildas_release.py --natif
-./gildas_release.py --natif --alpine
+./gildas_release.py --natif --debian
 ./gildas_release.py --natif --archive
 ./gildas_release.py --release jan26a --natif
 
-# Alpine variants, custom repo/Dockerfile, JSON output, direct execution
-./gildas_release.py --alpine
+# Debian variants, custom repo/Dockerfile, JSON output, direct execution
+./gildas_release.py --debian
 ./gildas_release.py --repo myuser/gildas --dockerfile Dockerfile.custom
 ./gildas_release.py --json
 ./gildas_release.py --release jan26a --execute
@@ -387,11 +393,8 @@ dropped, and `latest*` tags go to the newest release per family
 (`latest` for GILDAS, `latest-piic` for GILDAS+PIIC, tracked
 independently; single `--release` tags `latest` by default, opt out
 with `--no-tag-latest`). Archived releases are excluded unless
-`--archive` is given.
-
-The legacy wrapper `check_new_release.py` is kept for backward
-compatibility; it simply calls the default behaviour of
-`gildas_release.py`.
+`--archive` is given (PIIC commands often need it, as PIIC releases lag
+behind GILDAS ones — see `--piic` above).
 
 ### Container entrypoint
 
@@ -429,7 +432,7 @@ a wrapper is only created when it does not shadow a GILDAS program.)
 
 - **PIIC is not available or not found**  \
        Use a `*-piic` tag (for example `latest-piic`, `jan26a-piic`,
-       `latest-piic-alpine`) and run `piic` directly. Rebuild the image
+       `latest-piic-debian`) and run `piic` directly. Rebuild the image
        if yours predates the `/usr/local/bin` wrappers.
 
 - **`clic` is missing (images built before the fix)**  \
@@ -447,5 +450,5 @@ a wrapper is only created when it does not shadow a GILDAS program.)
 
 - **`greg` is missing**  \
        Unexpected: `greg` is built and on `PATH` in current images
-       (verified in `latest` / `latest-alpine`). Pull the newest tag —
+       (verified in `latest`). Pull the newest tag —
        you are likely running a stale local image.

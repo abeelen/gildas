@@ -1,22 +1,22 @@
 # syntax=docker/dockerfile:1
 FROM alpine:latest AS gildas_worker
 
-# This Dockerfile builds Alpine-based variants of the abeelen/gildas images.
+# This Dockerfile builds the (default) Alpine-based abeelen/gildas images.
+# Debian images are the opt-in variant built from Dockerfile (`-debian` tags).
 #
 # Recommended tags when building:
 #   docker build -f Dockerfile.alpine \
 #     --target gildas \
 #     --build-arg release=jan26a \
-#     -t abeelen/gildas:jan26a-alpine .
+#     -t abeelen/gildas:jan26a .
 #
 #   docker build -f Dockerfile.alpine \
 #     --target gildas-piic \
 #     --build-arg release=jan26a \
-#     -t abeelen/gildas:jan26a-piic-alpine .
+#     -t abeelen/gildas:jan26a-piic .
 #
-# You can also define "latest-alpine" / "latest-piic-alpine" tags in the
-# same way if you want to distinguish Alpine images from the Debian-based
-# ones built from Dockerfile.
+# Add `-t abeelen/gildas:latest` / `-t abeelen/gildas:latest-piic` for the
+# newest release (`gildas_release.py` does all of this automatically).
 
 # Tracking alpine:latest (rolling). Only
 # cfitsio comes from edge/testing.
