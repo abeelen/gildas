@@ -414,13 +414,13 @@ Builds reuse previously pushed layers (previous tags are pre-pulled),
 so unchanged images rebuild in minutes while a new release compiles
 from scratch (up to ~1 h per image, jobs run in parallel).
 
-The same automation exists for GitLab (`.gitlab-ci.yml`, same design):
+The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
+running on the `Kiss` runners that provide Docker directly):
 weekly schedules are created in the GitLab UI (Build > Pipeline
 schedules), manual runs via "Run pipeline" with optional `RELEASE` /
 `DEBIAN=1` / `PIIC=1` / `ARCHIVE=1` variables, and merge requests get a
 print-only plan. It needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-CI/CD variables and runners with privileged mode for the `docker:dind`
-service.
+CI/CD variables.
 
 ### Container entrypoint
 

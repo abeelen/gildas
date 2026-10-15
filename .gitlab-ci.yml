@@ -7,20 +7,22 @@
 #   DOCKERHUB_TOKEN    : Hub access token, Read & Write (masked)
 # Merge requests only get a printed plan (no login, no push, no build).
 #
-# Runners need Docker with privileged mode for the docker:dind service.
-# Schedules are created in the GitLab UI (Build > Pipeline schedules,
-# e.g. weekly); manual runs via "Run pipeline" with optional variables:
+# Runners tagged `Kiss` provide Docker directly (host socket, no dind
+# service needed). Schedules are created in the GitLab UI (Build >
+# Pipeline schedules, e.g. weekly); manual runs via "Run pipeline" with
+# optional variables:
 #   RELEASE : single GILDAS release (e.g. oct26a, empty = all missing)
 #   DEBIAN  : set to 1 to build Debian instead of Alpine (both otherwise)
 #   PIIC    : set to 1 for PIIC images only
 #   ARCHIVE : set to 1 to include archived releases
 
+default:
+  tags: [Kiss]
+
 stages: [plan, build]
 
 variables:
   DOCKER_BUILDKIT: "1"
-  DOCKER_HOST: tcp://docker:2375
-  DOCKER_TLS_CERTDIR: ""
 
 plan:
   stage: plan
@@ -36,9 +38,6 @@ plan:
 build:
   stage: build
   image: docker:27
-  services:
-    - name: docker:27-dind
-      alias: docker
   timeout: 3h
   parallel:
     matrix:
@@ -52,9 +51,7 @@ build:
     - pip install -q --break-system-packages click requests beautifulsoup4
     - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
   script:
-    # Fail fast when the docker daemon is unreachable (e.g. runner without
-    # privileged mode: dind cannot start). Without this, failed pulls are
-    # masked by `|| true` below and the job misleadingly goes green.
+    # Fail fast when the runner has no Docker access.
     - docker info >/dev/null
     # Manual run with DEBIAN=1 restricts to the Debian leg (like --debian).
     - if [ "$DEBIAN" = "1" ] && [ "$FAMILY" != "debian" ]; then echo "Skipped (DEBIAN=1)."; exit 0; fi
