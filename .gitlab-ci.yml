@@ -7,17 +7,14 @@
 #   DOCKERHUB_TOKEN    : Hub access token, Read & Write (masked)
 # Merge requests only get a printed plan (no login, no push, no build).
 #
-# Runners tagged `Kiss` provide Docker directly (host socket, no dind
-# service needed). Schedules are created in the GitLab UI (Build >
-# Pipeline schedules, e.g. weekly); manual runs via "Run pipeline" with
-# optional variables:
+# Builds run on runners tagged `docker`, which provide the Docker
+# daemon directly (host socket, no dind service needed). Schedules are
+# created in the GitLab UI (Build > Pipeline schedules, e.g. weekly);
+# manual runs via "Run pipeline" with optional variables:
 #   RELEASE : single GILDAS release (e.g. oct26a, empty = all missing)
 #   DEBIAN  : set to 1 to build Debian instead of Alpine (both otherwise)
 #   PIIC    : set to 1 for PIIC images only
 #   ARCHIVE : set to 1 to include archived releases
-
-default:
-  tags: [Kiss]
 
 stages: [plan, build]
 
@@ -38,6 +35,7 @@ plan:
 build:
   stage: build
   image: docker:27
+  tags: [docker]
   timeout: 3h
   parallel:
     matrix:
