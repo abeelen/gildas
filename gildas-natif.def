@@ -11,11 +11,17 @@ From: debian:stable-slim
     export GILDAS_URL=${GILDAS_URL:-https://www.iram.fr/~gildas/dist}
     export PIIC_URL=${PIIC_URL:-https://www.iram.fr/~gildas/dist}
     export GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
-    export MAKE_JOBS=${MAKE_JOBS:-8}
+    export MAKE_JOBS=${MAKE_JOBS:-$(nproc)}
+    export WITH_TEXLIVE=${WITH_TEXLIVE:-0}
+    export IMAGER_VERSION=${IMAGER_VERSION:-last}
+    export IMAGER_URL=${IMAGER_URL:-https://share.oasu.u-bordeaux.fr/imager}
+    export WITH_IMAGER=${WITH_IMAGER:-1}
     export SINGULARITY_SHELL=/bin/bash
 
 %post
-    set -e
+    # NOTE: %post runs under /bin/sh (dash on Debian): no pipefail, no
+    # `source` outside an explicit bash -c. Keep it POSIX.
+    set -eu
 
     export DEBIAN_FRONTEND=noninteractive
 
@@ -26,11 +32,17 @@ From: debian:stable-slim
     : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
     : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"
     : "${GAG_USE_SANITIZE:=no}"
-    : "${MAKE_JOBS:=8}"
+    : "${MAKE_JOBS:=$(nproc)}"
+    : "${WITH_TEXLIVE:=0}"
+    : "${IMAGER_VERSION:=last}"
+    : "${IMAGER_URL:=https://share.oasu.u-bordeaux.fr/imager}"
+    : "${WITH_IMAGER:=1}"
 
-    # Runtime dependencies
+    # Slim runtime dependencies (texlive only when WITH_TEXLIVE=1, for the
+    # pipeline; mirrors the gildas_worker stage of Dockerfile).
     apt-get -y update && apt-get install -y --no-install-recommends \
         bash \
+        ca-certificates \
         libx11-6 \
         libpng16-16 \
         libfftw3-double3 \
@@ -46,23 +58,24 @@ From: debian:stable-slim
         python3-scipy \
         python3-emcee \
         python3-matplotlib \
+        python3-astropy \
         ipython3 \
         python3-ipython \
         libgtk2.0 \
-        texlive \
-        ghostscript \
+        && if [ "${WITH_TEXLIVE}" = "1" ]; then apt-get install -y --no-install-recommends texlive ghostscript; fi \
         && apt-get clean \
         && rm -rf /var/lib/apt/lists/*
 
     # Build dependencies
     apt-get -y update && apt-get install -y --no-install-recommends \
-        ca-certificates \
         curl \
         xz-utils \
         make \
         gcc \
         g++ \
         gfortran \
+        pkg-config \
+        dpkg-dev \
         libx11-dev \
         libpng-dev \
         libfftw3-dev \
@@ -81,66 +94,157 @@ From: debian:stable-slim
     release="${GILDAS_RELEASE}"
     gildas_url="${GILDAS_URL}"
     piic_url="${PIIC_URL}"
-    make_jobs="${MAKE_JOBS}"
+
+    export GAG_USE_SANITIZE
 
     cd /
-    curl "${gildas_url}/gildas-src-${release}.tar.xz" | tar xJ
+    curl -fSL --retry 3 --connect-timeout 20 \
+        "${gildas_url}/gildas-src-${release}.tar.xz" -o "/tmp/gildas-src-${release}.tar.xz"
+    curl -fSL --retry 3 --connect-timeout 20 \
+        "${gildas_url}/gildas-doc-${release}.tar.xz" -o "/tmp/gildas-doc-${release}.tar.xz" || true
+    tar xJf "/tmp/gildas-src-${release}.tar.xz"
+    rm -f "/tmp/gildas-src-${release}.tar.xz"
 
+    # clic is the only package gated on GAG_USE_SANITIZE=yes with gfortran
+    # (packages/clic/Makefile empties its subdirs otherwise), which we keep
+    # disabled as it causes crashes: ungate it so clic is built normally.
+    clic_mk="gildas-src-${release}/packages/clic/Makefile"
+    if grep -q 'GAG_USE_SANITIZE' "${clic_mk}" 2>/dev/null; then
+        sed -i -e '/^ifeq ($(GAG_COMPILER_FKIND),gfortran)$/d' -e '/^  ifneq ($(GAG_USE_SANITIZE),yes)$/d' -e '/^    subdirs =$/d' -e '/^  endif$/d' -e '/^endif$/d' "${clic_mk}"
+        grep -q '^subdirs = lib main' "${clic_mk}" && ! grep -q 'GAG_USE_SANITIZE' "${clic_mk}" || { echo "ERROR: clic ungate patch failed" >&2; exit 1; }
+    fi
+
+    multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
     bash -c "cd gildas-src-${release} && \
-        GAG_SEARCH_PATH=/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
-        make -j ${make_jobs} && make install"
+        GAG_SEARCH_PATH=/usr/lib/${multiarch}:/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
+        make -j ${MAKE_JOBS} && make install"
 
     rm -rf "gildas-src-${release}"
 
-    cd "/gildas-exe-${release}"
-    curl "${gildas_url}/gildas-doc-${release}.tar.xz" | tar xJ
+    if [ -f "/tmp/gildas-doc-${release}.tar.xz" ]; then
+        cd "/gildas-exe-${release}" && tar xJf "/tmp/gildas-doc-${release}.tar.xz"
+        rm -f "/tmp/gildas-doc-${release}.tar.xz"
+    fi
 
-    # Optional PIIC installation (if tarball exists)
-    cd /
-    if curl -fsSL "${piic_url}/piic-exe-${release}.tar.xz" | tar xJ 2>/dev/null; then
-        HAVE_PIIC=1
+    # Standalone IMAGER (https://imager.oasu.u-bordeaux.fr, self-contained
+    # tree built like GILDAS) at canonical /imager-exe. Skipped when
+    # WITH_IMAGER=0.
+    mkdir -p /imager-exe
+    echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version
+    if [ "${WITH_IMAGER}" = "1" ]; then
+        unset gagsrcdir gagexedir gagadmdir || true
+        cd /tmp
+        curl -fSL --retry 3 --connect-timeout 20 \
+            "${IMAGER_URL}/imager-${IMAGER_VERSION}.tgz" -o imager-dl.tgz
+        imdir="$(tar tzf imager-dl.tgz | head -n 1 | cut -d/ -f1)"
+        case "${imdir}" in imager-src-*) ;; *) echo "ERROR: unexpected imager top dir ${imdir}" >&2; exit 1;; esac
+        echo "${imdir#imager-src-}" > /etc/imager-version
+        tar xzf imager-dl.tgz -C /
+        rm -f imager-dl.tgz
+        IMDIR="${imdir}" JOBS="${MAKE_JOBS}" SEARCH="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH):/usr/lib/x86_64-linux-gnu" bash -c '
+            set -ex
+            unset gagsrcdir gagexedir gagadmdir || true
+            cd "/${IMDIR}"
+            cd Admin-Source && source substitute.compile.sh && cd ..
+            GAG_SEARCH_PATH="${SEARCH}" source admin/imager-env.sh -o openmp
+            export gagexedir=/imager-exe
+            make -j "${JOBS}" && make install
+        '
+        rm -rf "/${imdir}"
     else
-        HAVE_PIIC=0
+        echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"
     fi
 
-    # Configure global GILDAS / PIIC environment in bash.bashrc
-    . /etc/os-release
+    # Optional PIIC installation (warns when the tarball is missing instead
+    # of silently producing a GILDAS-only image)
+    cd /
+    if curl -fSL --retry 3 --connect-timeout 20 \
+            "${piic_url}/piic-exe-${release}.tar.xz" -o "/tmp/piic-exe-${release}.tar.xz"; then
+        tar xJf "/tmp/piic-exe-${release}.tar.xz" && rm -f "/tmp/piic-exe-${release}.tar.xz"
+    else
+        echo "WARNING: no piic-exe-${release}.tar.xz at ${piic_url}, skipping PIIC" >&2
+    fi
 
+    # Auto-detect GAG_EXEC_SYSTEM instead of hardcoding
+    # x86_64-<distro>-gfortran-openmp (breaks on testing/unstable).
+    gag_exec_system="$(ls -1 "/gildas-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
+    if [ -z "${gag_exec_system}" ]; then gag_exec_system='x86_64-debian-gfortran-openmp'; fi
+
+    # Single environment file, shared by the runscript and appruns
+    # (same layout as /etc/gildas-env.sh in the Docker images).
     {
-        echo "# Gildas"
+        echo "# Gildas base environment"
         echo "export GAG_ROOT_DIR=/gildas-exe-${release}"
-        echo "export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp"
-        echo ". \$GAG_ROOT_DIR/etc/bash_profile"
-    } >> /etc/bash.bashrc
+        echo "export GAG_EXEC_SYSTEM=${gag_exec_system}"
+        echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
+        echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
+        echo 'fi'
+    } > /etc/gildas-env.sh
 
-    if [ "${HAVE_PIIC}" = "1" ]; then
-        {
-            echo '# Two separate gildas environement (PIIC.README)...'
-            echo 'gagpiic () {'
-            echo "  export GAG_ROOT_DIR=/piic-exe-${release}"
-            echo "  export GAG_EXEC_SYSTEM=x86_64-generic"
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
-            echo '}'
-            echo 'gaggildas () {'
-            echo "  export GAG_ROOT_DIR=/gildas-exe-${release}"
-            echo "  export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp"
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
-            echo '}'
-        } >> /etc/bash.bashrc
+    # Direct-access wrappers (same rule as the Docker images): every
+    # program shipped by the PIIC tree but missing from GILDAS (or IMAGER)
+    # gets a self-contained /usr/local/bin wrapper selecting the PIIC tree.
+    # Never shadows a GILDAS program of the same name.
+    if [ -f "/piic-exe-${release}/etc/bash_profile" ]; then
+        piic_exec="$(ls -1 "/piic-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
+        if [ -z "${piic_exec}" ]; then piic_exec='x86_64-generic'; fi
+        for _bin in "/piic-exe-${release}/${piic_exec}/bin/"*; do
+            _prog="$(basename "${_bin}")"
+            if [ ! -x "/gildas-exe-${release}/${gag_exec_system}/bin/${_prog}" ] && [ ! -e "/usr/local/bin/${_prog}" ]; then
+                {
+                    echo '#!/bin/sh'
+                    echo "# ${_prog}: runs from the PIIC tree (/piic-exe-${release})."
+                    echo "export GAG_ROOT_DIR=/piic-exe-${release}"
+                    echo "export GAG_EXEC_SYSTEM=${piic_exec}"
+                    echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
+                    echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
+                    echo 'fi'
+                    echo 'exec "$GAG_EXEC_DIR/bin/'"${_prog}"'" "$@"'
+                } > "/usr/local/bin/${_prog}"
+                chmod +x "/usr/local/bin/${_prog}"
+            fi
+        done
     fi
+
+    # Same for the standalone IMAGER tree at canonical /imager-exe.
+    if [ -f /imager-exe/etc/bash_profile ]; then
+        im_exec="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
+        if [ -z "${im_exec}" ]; then im_exec='x86_64-debian-gfortran-openmp'; fi
+        echo "${im_exec}" > /etc/imager-exec-system
+        for _bin in "/imager-exe/${im_exec}/bin/"*; do
+            _prog="$(basename "${_bin}")"
+            if [ ! -x "/gildas-exe-${release}/${gag_exec_system}/bin/${_prog}" ] && [ ! -e "/usr/local/bin/${_prog}" ]; then
+                {
+                    echo '#!/bin/sh'
+                    echo "# ${_prog}: runs from the standalone IMAGER tree (/imager-exe)."
+                    echo 'export GAG_ROOT_DIR=/imager-exe'
+                    echo "export GAG_EXEC_SYSTEM=${im_exec}"
+                    echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
+                    echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
+                    echo 'fi'
+                    echo 'exec "$GAG_EXEC_DIR/bin/'"${_prog}"'" "$@"'
+                } > "/usr/local/bin/${_prog}"
+                chmod +x "/usr/local/bin/${_prog}"
+            fi
+        done
+    fi
+
+    # Keep interactive shells working too
+    cat /etc/gildas-env.sh >> /etc/bash.bashrc
 
     # ------------------------------------------------------------------
     # Trim build-time dependencies and caches to reduce final SIF size
     # (emulates a "builder" + "worker" split in a single definition).
     # ------------------------------------------------------------------
     apt-get purge -y \
-        ca-certificates \
         curl \
         xz-utils \
         make \
         gcc \
         g++ \
         gfortran \
+        pkg-config \
+        dpkg-dev \
         libx11-dev \
         libpng-dev \
         libfftw3-dev \
@@ -158,53 +262,74 @@ From: debian:stable-slim
     rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info /tmp/* /var/tmp/*
 
 %runscript
-    # Default entrypoint: behave like the Docker ENTRYPOINT, using
-    # the container's /etc/bash.bashrc so that the GILDAS environment
-    # is always set.
+    # Source the GILDAS environment (same file as in the Docker images).
+    if [ -f /etc/gildas-env.sh ]; then
+        # shellcheck disable=SC1091
+        . /etc/gildas-env.sh
+    fi
+
     if [ "$#" -eq 0 ]; then
-        exec /bin/bash --rcfile /etc/bash.bashrc -i
+        exec /bin/bash -i
     else
-        exec /bin/bash --rcfile /etc/bash.bashrc -i -c "$*"
+        exec "$@"
     fi
 
 %apprun astro
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "astro"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec astro "$@"
 
 %apprun clic
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "clic"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec clic "$@"
 
 %apprun class
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "class"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec class "$@"
 
 %apprun cube
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "cube"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec cube "$@"
 
 %apprun flux
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "flux"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec flux "$@"
 
 %apprun greg
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "greg"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec greg "$@"
 
 %apprun hershey
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "hershey"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec hershey "$@"
 
 %apprun imager
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "imager"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec imager "$@"
 
 %apprun mapping
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "mapping"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec mapping "$@"
 
 %apprun orbit
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "orbit"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec orbit "$@"
 
 %apprun classic-read
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "classic-read"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec classic-read "$@"
 
 %apprun point
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "point"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec point "$@"
 
 %apprun sic
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "sic"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec sic "$@"
 
 %apprun piic
-    exec /bin/bash --rcfile /etc/bash.bashrc -i -c "gagpiic; piic"
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec piic "$@"
+
+%apprun viewer
+    . /etc/gildas-env.sh 2>/dev/null || true
+    exec viewer "$@"

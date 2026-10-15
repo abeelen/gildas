@@ -1,4 +1,5 @@
-FROM alpine:edge AS gildas_worker
+# syntax=docker/dockerfile:1
+FROM alpine:latest AS gildas_worker
 
 # This Dockerfile builds Alpine-based variants of the abeelen/gildas images.
 #
@@ -17,7 +18,10 @@ FROM alpine:edge AS gildas_worker
 # same way if you want to distinguish Alpine images from the Debian-based
 # ones built from Dockerfile.
 
-RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
+# Tracking alpine:latest (rolling). Only
+# cfitsio comes from edge/testing.
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
     apk add --no-cache \
     bash \
     curl \
@@ -26,6 +30,7 @@ RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/ap
     fftw \
     gtk+2.0 \
     python3 \
+    ipython \
     py3-pip \
     py3-numpy \
     py3-scipy \
@@ -35,12 +40,18 @@ RUN echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/ap
     libgomp \
     gcompat
 
-RUN pip install --no-cache-dir --break-system-packages ipython astropy
+# No py3-astropy in Alpine repos (checked on 3.24): install via pip.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --break-system-packages astropy
+
+LABEL org.opencontainers.image.title="GILDAS runtime (alpine)" \
+      org.opencontainers.image.source="https://github.com/abeelen/gildas"
 
 
 FROM gildas_worker AS gildas_builder
 
-RUN apk add --no-cache \
+RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add --no-cache \
     libx11-dev \
     libpng-dev \
     fftw-dev \
@@ -50,7 +61,13 @@ RUN apk add --no-cache \
     gfortran \
     groff \
     build-base \
-    linux-headers
+    linux-headers \
+    ccache
+
+ENV PATH="/usr/lib/ccache/bin:${PATH}" \
+    CC="ccache gcc" \
+    CXX="ccache g++" \
+    FC="ccache gfortran"
 
 
 FROM gildas_builder AS builder
@@ -60,48 +77,179 @@ ENV release=${release}
 
 # Base URL for GILDAS (can be overridden at build time)
 ARG GILDAS_URL=https://www.iram.fr/~gildas/dist
-ENV GILDAS_URL=$GILDAS_URL
 
 # SANITIZE option can trigger crashes; keep disabled by default
-ARG GAG_USE_SANITIZE
-ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
+ARG GAG_USE_SANITIZE=no
+ENV GAG_USE_SANITIZE=${GAG_USE_SANITIZE}
 
-ARG MAKE_JOBS=8
+# Defaults to host CPU count when empty. Override with --build-arg MAKE_JOBS=N.
+ARG MAKE_JOBS=""
 
 WORKDIR /
 
-RUN curl "$GILDAS_URL/gildas-src-$release.tar.xz" | tar xJ && \
-    bash -c "cd gildas-src-$release && \
-    GAG_SEARCH_PATH=/usr/lib source admin/gildas-env.sh -o openmp && \
-    sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
-    sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
-    sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
-    sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c && \
-    sed -i 's|<sys/unistd.h>|<unistd.h>|' kernel/lib/gtv/xsub.c && \
-    sed -i s'/__sighandler_t sic_sighandler_t/void \(\* sic_sighandler_t\)\(int\)/' kernel/lib/gcore/gcomm.h && \
-    make -j ${MAKE_JOBS} && make install" && \
-    rm -Rf "gildas-src-$release" && \
-    cd "gildas-exe-$release" && curl "$GILDAS_URL/gildas-doc-$release.tar.xz" | tar xJ
+# 1. Separate download layer: cached unless release/URL changes.
+RUN set -eu -o pipefail; \
+    curl -fSL --retry 3 --connect-timeout 20 \
+      "$GILDAS_URL/gildas-src-$release.tar.xz" -o "/tmp/gildas-src-$release.tar.xz"; \
+    curl -fSL --retry 3 --connect-timeout 20 \
+      "$GILDAS_URL/gildas-doc-$release.tar.xz" -o "/tmp/gildas-doc-$release.tar.xz" || true; \
+    tar xJf "/tmp/gildas-src-$release.tar.xz"; \
+    rm -f "/tmp/gildas-src-$release.tar.xz"
+
+# 2. Source patches (musl compatibility + clic ungate), isolated in their
+# own layer so a patch change does not force a re-download. Each sed is
+# guarded: fails loudly if the expected pattern disappears in a new
+# release instead of silently doing nothing.
+RUN set -eu -o pipefail; \
+    cd "gildas-src-$release"; \
+    grep -q 'sysconf (_SC_LEVEL1_DCACHE_SIZE)' kernel/lib/gsys/sysc.c && \
+      sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
+      echo "WARN: LEVEL1_DCACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL2_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
+      sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
+      echo "WARN: LEVEL2_CACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL3_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
+      sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
+      echo "WARN: LEVEL3_CACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL4_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
+      sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
+      echo "WARN: LEVEL4_CACHE pattern not found, skipping" >&2; \
+    grep -q '<sys/unistd.h>' kernel/lib/gtv/xsub.c && \
+      sed -i 's|<sys/unistd.h>|<unistd.h>|' kernel/lib/gtv/xsub.c || \
+      echo "WARN: xsub.c unistd pattern not found, skipping" >&2; \
+    grep -q '__sighandler_t sic_sighandler_t' kernel/lib/gcore/gcomm.h && \
+      sed -i 's/__sighandler_t sic_sighandler_t/void (* sic_sighandler_t)(int)/' kernel/lib/gcore/gcomm.h || \
+      echo "WARN: gcomm.h sighandler pattern not found, skipping" >&2; \
+    CLIC_MK="packages/clic/Makefile"; \
+    if grep -q 'GAG_USE_SANITIZE' "$CLIC_MK" 2>/dev/null; then \
+      sed -i -e '/^ifeq ($(GAG_COMPILER_FKIND),gfortran)$/d' -e '/^  ifneq ($(GAG_USE_SANITIZE),yes)$/d' -e '/^    subdirs =$/d' -e '/^  endif$/d' -e '/^endif$/d' "$CLIC_MK"; \
+      grep -q '^subdirs = lib main' "$CLIC_MK" && ! grep -q 'GAG_USE_SANITIZE' "$CLIC_MK" || { echo "ERROR: clic ungate patch failed" >&2; exit 1; }; \
+    fi
+
+# 3. Compile layer with ccache.
+RUN --mount=type=cache,target=/root/.ccache \
+    set -eu -o pipefail; \
+    JOBS="${MAKE_JOBS:-$(nproc)}"; \
+    cd "gildas-src-$release" && \
+    bash -c "GAG_SEARCH_PATH=/usr/lib source admin/gildas-env.sh -o openmp && make -j $JOBS && make install"; \
+    rm -rf "gildas-src-$release"; \
+    if [ -f "/tmp/gildas-doc-$release.tar.xz" ]; then \
+      cd "gildas-exe-$release" && tar xJf "/tmp/gildas-doc-$release.tar.xz" && rm -f "/tmp/gildas-doc-$release.tar.xz"; \
+    fi; \
+    ccache -s || true
+
+# Standalone IMAGER (https://imager.oasu.u-bordeaux.fr, self-contained tree
+# built like GILDAS). Installed to canonical /imager-exe. Skipped when
+# WITH_IMAGER=0 (an empty /imager-exe keeps the COPY below valid).
+ARG IMAGER_VERSION=last
+ARG IMAGER_URL=https://share.oasu.u-bordeaux.fr/imager
+ARG WITH_IMAGER=1
+
+RUN set -eu -o pipefail; \
+    mkdir -p /imager-exe; \
+    echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version; \
+    if [ "${WITH_IMAGER}" != "1" ]; then echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"; exit 0; fi; \
+    cd /tmp; \
+    curl -fSL --retry 3 --connect-timeout 20 "${IMAGER_URL}/imager-${IMAGER_VERSION}.tgz" -o imager-dl.tgz; \
+    set +o pipefail; IMDIR="$(tar tzf imager-dl.tgz | head -n 1 | cut -d/ -f1)"; set -o pipefail; \
+    case "${IMDIR}" in imager-src-*) ;; *) echo "ERROR: unexpected imager top dir ${IMDIR}" >&2; exit 1;; esac; \
+    echo "${IMDIR#imager-src-}" > /etc/imager-version; \
+    tar xzf imager-dl.tgz -C /; rm -f imager-dl.tgz; \
+    IMROOT="/${IMDIR}"; \
+    grep -q 'sysconf (_SC_LEVEL1_DCACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
+      sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
+      echo "WARN: imager LEVEL1_DCACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL2_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
+      sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
+      echo "WARN: imager LEVEL2_CACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL3_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
+      sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
+      echo "WARN: imager LEVEL3_CACHE pattern not found, skipping" >&2; \
+    grep -q 'sysconf (_SC_LEVEL4_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
+      sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
+      echo "WARN: imager LEVEL4_CACHE pattern not found, skipping" >&2; \
+    grep -q '<sys/unistd.h>' "$IMROOT/kernel/lib/gtv/xsub.c" && \
+      sed -i 's|<sys/unistd.h>|<unistd.h>|' "$IMROOT/kernel/lib/gtv/xsub.c" || \
+      echo "WARN: imager xsub.c unistd pattern not found, skipping" >&2; \
+    grep -q '__sighandler_t sic_sighandler_t' "$IMROOT/kernel/lib/gcore/gcomm.h" && \
+      sed -i 's/__sighandler_t sic_sighandler_t/void (* sic_sighandler_t)(int)/' "$IMROOT/kernel/lib/gcore/gcomm.h" || \
+      echo "WARN: imager gcomm.h sighandler pattern not found, skipping" >&2; \
+    IMDIR="${IMDIR}" JOBS="${MAKE_JOBS:-$(nproc)}" bash -c ' \
+      set -ex -o pipefail; \
+      unset gagsrcdir gagexedir gagadmdir || true; \
+      cd "/${IMDIR}"; \
+      cd Admin-Source && source substitute.compile.sh && cd ..; \
+      GAG_SEARCH_PATH=/usr/lib source admin/imager-env.sh -o openmp; \
+      export gagexedir=/imager-exe; \
+      make -j "${JOBS}" && make install; \
+    '; \
+    rm -rf "/${IMDIR}"
 
 
 FROM gildas_worker AS gildas
 
 ARG release
 ENV release=${release}
+ARG IMAGER_VERSION=last
+ENV IMAGER_VERSION=${IMAGER_VERSION}
 
 COPY --from=builder /gildas-exe-$release /gildas-exe-$release
+COPY --from=builder /imager-exe /imager-exe
+COPY --from=builder /etc/imager-version /etc/imager-version
 
 SHELL ["/bin/bash", "-c"]
 
-RUN . /etc/os-release && \
-    cat <<EOF > /etc/gildas-env.sh
+# Do not hardcode x86_64-alpineX.Y (musl layout differs from glibc):
+# detect at build time, re-resolve at container start.
+RUN set -eu -o pipefail; \
+    CANDIDATE="$(ls -1 /gildas-exe-$release/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
+    if [ -z "$CANDIDATE" ]; then CANDIDATE='x86_64-generic'; fi; \
+    echo "$CANDIDATE" > /etc/gildas-exec-system; \
+    GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
+    cat > /etc/gildas-env.sh <<EOF
 # Gildas base environment
 export GAG_ROOT_DIR=/gildas-exe-$release
-export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
-. \$GAG_ROOT_DIR/etc/bash_profile
+export GAG_EXEC_SYSTEM=$GAG_EXEC_SYSTEM
+if [ -f \$GAG_ROOT_DIR/etc/bash_profile ]; then
+  . \$GAG_ROOT_DIR/etc/bash_profile
+fi
+if [ ! -d "\$GAG_ROOT_DIR/\$GAG_EXEC_SYSTEM" ]; then
+  _detected=\$(ls -1 "\$GAG_ROOT_DIR" 2>/dev/null | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)
+  if [ -n "\$_detected" ]; then export GAG_EXEC_SYSTEM="\$_detected"; fi
+fi
 EOF
+# Direct-access wrappers: every program shipped by the standalone IMAGER
+# tree (https://imager.oasu.u-bordeaux.fr) but missing from GILDAS gets a
+# self-contained /usr/local/bin wrapper selecting the IMAGER tree.
+# Rule: never shadow a GILDAS program of the same name.
+# NOTE: no heredoc here, a RUN cannot continue past a heredoc terminator.
+RUN set -eu -o pipefail; \
+    if [ -f /imager-exe/etc/bash_profile ]; then \
+      IM_EXEC="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
+      if [ -z "$IM_EXEC" ]; then IM_EXEC='x86_64-generic'; fi; \
+      echo "$IM_EXEC" > /etc/imager-exec-system; \
+      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
+      for _bin in "/imager-exe/$IM_EXEC/bin/"*; do \
+        _prog="$(basename "$_bin")"; \
+        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
+          { echo '#!/bin/sh'; \
+            echo "# $_prog: runs from the standalone IMAGER tree (/imager-exe)."; \
+            echo 'export GAG_ROOT_DIR=/imager-exe'; \
+            echo "export GAG_EXEC_SYSTEM=$IM_EXEC"; \
+            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
+            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
+            echo 'fi'; \
+            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
+          } > "/usr/local/bin/$_prog"; \
+          chmod +x "/usr/local/bin/$_prog"; \
+        fi; \
+      done; \
+    fi
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+LABEL org.opencontainers.image.title="GILDAS (alpine)" \
+      org.opencontainers.image.revision="${release}"
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["bash"]
@@ -109,27 +257,44 @@ CMD ["bash"]
 
 FROM gildas AS gildas-piic
 
+ARG release
+ENV release=${release}
 ARG PIIC_URL=https://www.iram.fr/~gildas/dist
-ENV GILDAS_URL=$PIIC_URL
+ENV PIIC_URL=$PIIC_URL
 
 WORKDIR /
 
-RUN curl "$GILDAS_URL/piic-exe-$release.tar.xz" | tar xJ || true
+RUN set -eu -o pipefail; \
+    if curl -fSL --retry 3 --connect-timeout 20 "$PIIC_URL/piic-exe-$release.tar.xz" -o "/tmp/piic-exe-$release.tar.xz"; then \
+      tar xJf "/tmp/piic-exe-$release.tar.xz" && rm -f "/tmp/piic-exe-$release.tar.xz"; \
+    else \
+      echo "WARNING: no piic-exe-$release.tar.xz at $PIIC_URL, skipping PIIC layer" >&2; \
+    fi
 
 SHELL ["/bin/bash", "-c"]
 
-RUN . /etc/os-release && \
-        cat <<EOF >> /etc/gildas-env.sh
-# Two separate gildas environement (PIIC.README)...
-gagpiic () {
-    export GAG_ROOT_DIR=/piic-exe-$release
-    export GAG_EXEC_SYSTEM=x86_64-generic
-    . \$GAG_ROOT_DIR/etc/bash_profile
-}
-gaggildas () {
-    export GAG_ROOT_DIR=/gildas-exe-$release
-    export GAG_EXEC_SYSTEM=x86_64-${ID}${VERSION_ID}-gfortran-openmp
-    . \$GAG_ROOT_DIR/etc/bash_profile
-}
-EOF
-
+# Direct-access wrappers: every program shipped by the PIIC tree but
+# missing from GILDAS (or IMAGER) gets a self-contained /usr/local/bin
+# wrapper selecting the PIIC tree. Same never-shadow rule as above.
+RUN set -eu -o pipefail; \
+    if [ -f "/piic-exe-$release/etc/bash_profile" ]; then \
+      PIIC_EXEC="$(ls -1 "/piic-exe-$release/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
+      if [ -z "$PIIC_EXEC" ]; then PIIC_EXEC='x86_64-generic'; fi; \
+      echo "$PIIC_EXEC" > /etc/piic-exec-system; \
+      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
+      for _bin in "/piic-exe-$release/$PIIC_EXEC/bin/"*; do \
+        _prog="$(basename "$_bin")"; \
+        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
+          { echo '#!/bin/sh'; \
+            echo "# $_prog: runs from the PIIC tree (/piic-exe-$release)."; \
+            echo "export GAG_ROOT_DIR=/piic-exe-$release"; \
+            echo "export GAG_EXEC_SYSTEM=$PIIC_EXEC"; \
+            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
+            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
+            echo 'fi'; \
+            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
+          } > "/usr/local/bin/$_prog"; \
+          chmod +x "/usr/local/bin/$_prog"; \
+        fi; \
+      done; \
+    fi
