@@ -12,17 +12,19 @@ You can use it either with Docker or simply with Singularity.
 ## Quick start
 
 ```bash
-# Singularity, GILDAS without PIIC (latest Debian-based image)
+# Singularity or Docker: every program runs directly by name.
+# GILDAS programs
 singularity run docker://abeelen/gildas:latest mapping
-
-# Singularity, GILDAS with PIIC
-singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
-
-# Docker, GILDAS without PIIC
 docker run --rm -it abeelen/gildas:latest mapping
 
-# Docker, GILDAS with PIIC
-docker run --rm -it abeelen/gildas:latest-piic "gagpiic; piic"
+# PIIC (on a *-piic image)
+singularity run docker://abeelen/gildas:latest-piic piic
+docker run --rm -it abeelen/gildas:latest-piic piic
+
+# Standalone IMAGER (bundled in all images)
+singularity run docker://abeelen/gildas:latest imager
+docker run --rm -it abeelen/gildas:latest imager
+docker run --rm -it abeelen/gildas:latest viewer
 ```
 
 ## Docker tags overview
@@ -48,28 +50,45 @@ You can simply run any of the gildas application with:
 singularity run docker://abeelen/gildas:latest {application}
 ```
 
-or, if you want to use piic
+or, on a `*-piic` image, `piic` (and `imager` / `viewer` work on all
+images):
+
 ```bash
-singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
+singularity run docker://abeelen/gildas:latest-piic piic
+singularity run docker://abeelen/gildas:latest imager
 ```
 
-You can also build a native Singularity image (SIF) from the Docker
-image or from one of the provided definition files (`gildas-latest.def`
-or `gildas-natif.def`).
+Two ways to build a local SIF image (Debian or Alpine base):
+
+| Method | Command | Pros | Cons |
+|--------|---------|------|------|
+| From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
+| Native (`gildas-natif.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `GILDAS_URL`/`PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
+| From Docker Hub, Alpine | `singularity build gildas-jan26a-alpine.sif docker://abeelen/gildas:jan26a-alpine` | fast, slim musl image | needs the `-alpine` Docker tag to exist |
+| Native Alpine (`gildas-natif-alpine.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
+
+The helper script generates the `docker://` commands for you
+(`./gildas_release.py --singularity`, add `--alpine` for the Alpine tags).
 
 ```bash
 # Build a SIF directly from the Docker image on Docker Hub
 singularity build gildas-latest.sif docker://abeelen/gildas:latest
 
-# Or, using the Singularity definition file (keeps custom apprun entries)
+# Or, using the Singularity definition files (keep custom apprun entries)
 singularity build gildas-latest.sif gildas-latest.def
+singularity build gildas-latest-alpine.sif gildas-latest-alpine.def
 
 # Native build from tarballs (no Docker involved), with configurable
 # release and URLs (see %environment in gildas-natif.def)
 export GILDAS_RELEASE=jan26a
 export GILDAS_URL=https://www.iram.fr/~gildas/dist
 export PIIC_URL=https://www.iram.fr/~gildas/dist
+export MAKE_JOBS=$(nproc)
+# export WITH_TEXLIVE=1  # only if you need the pipeline (texlive in image)
 sudo singularity build gildas-${GILDAS_RELEASE}-natif.sif gildas-natif.def
+
+# Native Alpine build (musl patches from Dockerfile.alpine included)
+sudo singularity build gildas-${GILDAS_RELEASE}-natif-alpine.sif gildas-natif-alpine.def
 
 # Then, run interactively (GILDAS shell)
 singularity shell gildas-latest.sif
@@ -77,14 +96,21 @@ singularity shell gildas-latest.sif
 # Run a specific GILDAS application via the default runscript
 singularity run gildas-latest.sif "mapping"
 
-# Or via apprun shortcuts (defined in gildas_docker.def)
+# Or via apprun shortcuts (defined in gildas-latest.def / gildas-natif.def,
+# with -alpine variants in gildas-latest-alpine.def / gildas-natif-alpine.def)
 singularity run --app astro   gildas-latest.sif
 singularity run --app class   gildas-latest.sif
 singularity run --app clic    gildas-latest.sif
-singularity run --app imager  gildas-latest.sif
 singularity run --app mapping gildas-latest.sif
 singularity run --app piic    gildas-latest.sif
+singularity run --app imager  gildas-latest.sif
+singularity run --app viewer  gildas-latest.sif
 ```
+
+Every program runs directly by name: GILDAS tools from the default
+environment, IMAGER/PIIC tools via self-contained `/usr/local/bin`
+wrappers that select their own tree (a flavor never shadows a GILDAS
+program of the same name).
 
 ### Usage with Docker
 
@@ -122,9 +148,9 @@ ip=$(ifconfig en0 | grep inet | awk '$1=="inet" {print $2}’)
 xhost + $ip
 ```
 
-You can then use any of the gildas command.
-
-Starting from the oct19a, one has to define which gildas environement to use either `gaggildas` or `gagpiic` before launching gildas command.
+You can then use any of the gildas command directly by name — GILDAS,
+IMAGER and (on `*-piic` images) PIIC programs all work with no prefix,
+each selecting its own installation tree behind the scenes.
 
 It is easier to create usefull aliases in `~/.bashrc`
 
@@ -146,13 +172,14 @@ alias gildas_docker='docker run -it \
        --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest-piic'
 
-alias clic='gildas_docker "gaggildas; clic"'
-alias mapping='gildas_docker "gaggildas; mapping"'
-alias astro='gildas_docker "gaggildas; astro"'
-alias piic='gildas_docker "gagpiic; piic"'
-alias cube='gildas_docker "gaggildas; cube"'
+alias clic='gildas_docker clic'
+alias mapping='gildas_docker mapping'
+alias astro='gildas_docker astro'
+alias piic='gildas_docker piic'
+alias cube='gildas_docker cube'
 [...]
-alias imager='gildas_docker "gaggildas; imager"'
+alias imager='gildas_docker imager'
+alias viewer='gildas_docker viewer'
 ```
 
 Alternatively if you do not need PIIC,
@@ -181,22 +208,48 @@ alias astro='gildas_docker astro'
 alias cube='gildas_docker cube'
 [...]
 alias imager='gildas_docker imager'
+alias viewer='gildas_docker viewer'
 ```
 
 
 ## Building images
 
-With Docker 17.05 or higher :
+With Docker 17.05 or higher (BuildKit recommended for cache mounts and
+`ccache` speedups: `DOCKER_BUILDKIT=1`):
 
 ```bash
 export release=jan26a
 docker build \
        --tag abeelen/gildas:${release} \
-       --tag abeelen/gildas:latest \
        --target gildas \
        --build-arg release=${release} \
+       --build-arg MAKE_JOBS=$(nproc) \
        -f Dockerfile .
+# Only add --tag abeelen/gildas:latest for the newest release.
 ```
+
+Build args:
+
+- `MAKE_JOBS` (default: `nproc`): parallel `make -j` jobs. `ccache` and
+  apt/apk cache mounts are enabled automatically under BuildKit.
+- `WITH_TEXLIVE=1` (Debian only, default `0`): keep `texlive`+`ghostscript`
+  in the runtime image for the pipeline. Default is a slim runtime.
+- `GILDAS_URL` / `PIIC_URL`: override the download base (used for archived
+  releases).
+- `WITH_IMAGER=1` (default `1`): build and ship the standalone IMAGER
+  (`imager`, `viewer`, plus other IMAGER-only programs, exposed as
+  `/usr/local/bin` wrappers). Set `WITH_IMAGER=0` to skip it.
+- `IMAGER_VERSION` (default `last`): IMAGER tarball version, e.g.
+  `oct26` (see https://imager.oasu.u-bordeaux.fr). Note the schemes
+  differ — GILDAS releases carry a letter suffix (`oct26a`) while
+  IMAGER versions do not (`oct26`) — so never reuse the GILDAS
+  release name here; leave `last` or pin an explicit IMAGER version.
+  `gildas_release.py` couples them automatically (`oct26a` →
+  `--build-arg IMAGER_VERSION=oct26`, fallback `last` with a warning;
+  override with `--imager-version`). `IMAGER_URL` overrides its
+  download base (`https://share.oasu.u-bordeaux.fr/imager`). The
+  resolved version is recorded in the image at `/etc/imager-version`.
+- `GAG_USE_SANITIZE=no` (default): leave disabled (crashes otherwise).
 
 ### PIIC
 
@@ -206,16 +259,18 @@ Starting with oct19a, PIIC is included in the container. The multi-stage
 - `gildas` : image without PIIC
 - `gildas-piic` : image including PIIC
 
-To build the PIIC image for a given release:
+To build the PIIC image for a given release (missing PIIC tarballs now
+warn instead of silently producing a GILDAS-only image thanks to the
+`curl -fSL --retry` check):
 
 ```bash
 export release=jan26a
 docker build \
        --tag abeelen/gildas:${release}-piic \
-       --tag abeelen/gildas:latest-piic \
        --target gildas-piic \
        --build-arg release=${release} \
        -f Dockerfile .
+# Only add --tag abeelen/gildas:latest-piic for the newest release.
 ```
 
 The default build uses the main GILDAS distribution URLs. For archived
@@ -229,7 +284,8 @@ generate the appropriate `--build-arg GILDAS_URL=...` and
 
 In addition to the default Debian-based images built from `Dockerfile`,
 this repository also provides Alpine variants built from
-`Dockerfile.alpine`.
+`Dockerfile.alpine` (tracking `alpine:latest`, only `cfitsio` from
+edge/testing).
 
 The recommended tags are:
 
@@ -239,7 +295,6 @@ export release=jan26a
 # GILDAS only, Alpine base image
 docker build \
        --tag abeelen/gildas:${release}-alpine \
-       --tag abeelen/gildas:latest-alpine \
        --target gildas \
        --build-arg release=${release} \
        -f Dockerfile.alpine .
@@ -247,11 +302,12 @@ docker build \
 # GILDAS + PIIC, Alpine base image
 docker build \
        --tag abeelen/gildas:${release}-piic-alpine \
-       --tag abeelen/gildas:latest-piic-alpine \
        --target gildas-piic \
        --build-arg release=${release} \
        -f Dockerfile.alpine .
 ```
+(`latest-alpine` / `latest-piic-alpine` should only be added for the
+newest release; `gildas_release.py` does this automatically.)
 
 The helper script `gildas_release.py` can also generate commands for the
 Alpine images using the `--alpine` toggle:
@@ -285,24 +341,74 @@ Typical usage:
 
 ```bash
 # List build commands for all missing releases (GILDAS and PIIC),
-# ordered from oldest to newest
+# ordered from oldest to newest (newest per family gets `latest` tags)
 ./gildas_release.py
 
 # Same, but including releases that are already present on Docker Hub
 ./gildas_release.py --force
 
-# Commands for a single release (and its -piic variant if available)
+# Also include archived releases (off by default: slower, queries the
+# archive trees)
+./gildas_release.py --archive
+
+# Commands for a single release (and its -piic variant if available).
+# Tags `latest` by default; opt out with --no-tag-latest.
 ./gildas_release.py --release jan26a
+./gildas_release.py --release jan26a --no-tag-latest
+
+# Singularity: emit `singularity build ... docker://...` commands
+# (lists all known releases, since SIFs pull from Docker Hub)
+./gildas_release.py --singularity
+./gildas_release.py --singularity --alpine
+./gildas_release.py --release jan26a --singularity
+
+# Singularity, native path: emit `singularity build ... .def` commands
+# (one per release, PIIC bundled when available, archive URLs included
+# when needed — needs root or --fakeroot to run)
+./gildas_release.py --natif
+./gildas_release.py --natif --alpine
+./gildas_release.py --natif --archive
+./gildas_release.py --release jan26a --natif
+
+# Alpine variants, custom repo/Dockerfile, JSON output, direct execution
+./gildas_release.py --alpine
+./gildas_release.py --repo myuser/gildas --dockerfile Dockerfile.custom
+./gildas_release.py --json
+./gildas_release.py --release jan26a --execute
+./gildas_release.py -v   # info logs, -vv for debug
 ```
 
 In all cases, the script emits commands for both the `gildas` and
 `gildas-piic` targets when the corresponding tarballs exist upstream,
 and adds the correct `GILDAS_URL` / `PIIC_URL` archive URLs when
-necessary.
+necessary. Commands no longer use `export release=...;$release` shell
+tricks: the release is inlined and quoted, empty `--build-arg`s are
+dropped, and `latest*` tags go to the newest release per family
+(`latest` for GILDAS, `latest-piic` for GILDAS+PIIC, tracked
+independently; single `--release` tags `latest` by default, opt out
+with `--no-tag-latest`). Archived releases are excluded unless
+`--archive` is given.
 
 The legacy wrapper `check_new_release.py` is kept for backward
 compatibility; it simply calls the default behaviour of
 `gildas_release.py`.
+
+### Container entrypoint
+
+`docker-entrypoint.sh` sources `/etc/gildas-env.sh` (default GILDAS
+environment), then `exec`s the given command. Every program runs
+directly by name — no prefixes, no environment switching on your side:
+
+```bash
+docker run --rm -it abeelen/gildas:latest mapping
+docker run --rm -it abeelen/gildas:latest imager
+docker run --rm -it abeelen/gildas:latest viewer
+docker run --rm -it abeelen/gildas:latest-piic piic
+```
+
+(Programs from the standalone IMAGER tree and the PIIC tree are
+self-contained `/usr/local/bin` wrappers selecting their own tree;
+a wrapper is only created when it does not shadow a GILDAS program.)
 
 ## Troubleshooting / FAQ
 
@@ -323,5 +429,23 @@ compatibility; it simply calls the default behaviour of
 
 - **PIIC is not available or not found**  \
        Use a `*-piic` tag (for example `latest-piic`, `jan26a-piic`,
-       `latest-piic-alpine`) and start the PIIC environment with `gagpiic`
-       before launching `piic`.
+       `latest-piic-alpine`) and run `piic` directly. Rebuild the image
+       if yours predates the `/usr/local/bin` wrappers.
+
+- **`clic` is missing (images built before the fix)**  \
+       Upstream gates `clic` on `GAG_USE_SANITIZE=yes` with gfortran
+       (`packages/clic/Makefile` empties its subdirs otherwise), which
+       these images keep disabled. Current recipes ungate it
+       automatically; rebuild the image to get `clic`.
+
+- **`imager` / `viewer` are missing**  \
+       IMAGER left the GILDAS distribution and is now standalone
+       (https://imager.oasu.u-bordeaux.fr). Current recipes build and
+       bundle it (`/imager-exe`, `WITH_IMAGER` build arg) with
+       `/usr/local/bin` wrappers, so `imager` / `viewer` work directly.
+       Rebuild the image if yours predates this.
+
+- **`greg` is missing**  \
+       Unexpected: `greg` is built and on `PATH` in current images
+       (verified in `latest` / `latest-alpine`). Pull the newest tag —
+       you are likely running a stale local image.
