@@ -67,7 +67,7 @@ def gildas_release(package: str, archive: bool = False) -> List[str]:
 
     r = requests.get(uri, timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
-    soup = BeautifulSoup(r.text, features="lxml")
+    soup = BeautifulSoup(r.text, features="html.parser")
     releases: List[str] = []
     for link in soup.find_all("a"):
         href = link.get("href", "")
@@ -109,7 +109,7 @@ def imager_release() -> List[str]:
     """
     r = requests.get(IMAGER_URL + "/?noscript", timeout=REQUEST_TIMEOUT)
     r.raise_for_status()
-    soup = BeautifulSoup(r.text, features="lxml")
+    soup = BeautifulSoup(r.text, features="html.parser")
     versions: List[str] = []
     for link in soup.find_all("a"):
         href = link.get("href", "")
