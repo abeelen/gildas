@@ -192,8 +192,10 @@ From: alpine:latest
     if curl -fSL --retry 3 --connect-timeout 20 \
             "${piic_url}/piic-exe-${release}.tar.xz" -o "/tmp/piic-exe-${release}.tar.xz"; then
         tar xJf "/tmp/piic-exe-${release}.tar.xz" && rm -f "/tmp/piic-exe-${release}.tar.xz"
+        echo "${release}" > /etc/piic-version
     else
         echo "WARNING: no piic-exe-${release}.tar.xz at ${piic_url}, skipping PIIC" >&2
+        echo "none (unresolved)" > /etc/piic-version
     fi
 
     # Auto-detect GAG_EXEC_SYSTEM (musl layout differs from glibc).

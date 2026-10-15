@@ -110,6 +110,11 @@ environment, IMAGER/PIIC tools via self-contained `/usr/local/bin`
 wrappers that select their own tree (a flavor never shadows a GILDAS
 program of the same name).
 
+Images are self-describing: `docker inspect` shows `abeelen.gildas.*`
+labels (release, base, target, IMAGER version), and
+`/etc/imager-version` / `/etc/piic-version` inside the image record the
+bundled component versions authoritatively (`none` when absent).
+
 ### Usage with Docker
 
 To launch the gildas container, type :
@@ -397,7 +402,6 @@ behind GILDAS ones — see `--piic` above).
 
 `.github/workflows/build.yml` runs the same script in CI (Alpine and
 Debian families in parallel):
-
 - weekly schedule: builds and pushes whatever is missing on Docker Hub;
 - recipe push (`Dockerfile*`, `docker-entrypoint.sh`, `gildas_release.py`,
   `gildas-*.def`): rebuilds on top of the new recipes;
@@ -410,6 +414,13 @@ Pushing needs two repo secrets: `DOCKERHUB_USERNAME` and
 Builds reuse previously pushed layers (previous tags are pre-pulled),
 so unchanged images rebuild in minutes while a new release compiles
 from scratch (up to ~1 h per image, jobs run in parallel).
+
+`.github/workflows/sif.yml` converts Hub tags to Singularity SIFs
+(`latest`, `latest-piic` by default, override via manual dispatch) and
+attaches them to the rolling `sif-images` GitHub release, rebuilding a
+tag only when its Hub push is newer than the published asset. Run it
+manually after pushing rebuilt tags; the Friday schedule then just
+keeps them fresh.
 
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):
