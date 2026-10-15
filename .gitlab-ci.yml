@@ -52,6 +52,10 @@ build:
     - pip install -q --break-system-packages click requests beautifulsoup4
     - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
   script:
+    # Fail fast when the docker daemon is unreachable (e.g. runner without
+    # privileged mode: dind cannot start). Without this, failed pulls are
+    # masked by `|| true` below and the job misleadingly goes green.
+    - docker info >/dev/null
     # Manual run with DEBIAN=1 restricts to the Debian leg (like --debian).
     - if [ "$DEBIAN" = "1" ] && [ "$FAMILY" != "debian" ]; then echo "Skipped (DEBIAN=1)."; exit 0; fi
     - ARGS=""
