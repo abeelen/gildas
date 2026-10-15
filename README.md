@@ -396,6 +396,24 @@ with `--no-tag-latest`). Archived releases are excluded unless
 `--archive` is given (PIIC commands often need it, as PIIC releases lag
 behind GILDAS ones — see `--piic` above).
 
+### Automation (GitHub Actions)
+
+`.github/workflows/build.yml` runs the same script in CI (Alpine and
+Debian families in parallel):
+
+- weekly schedule: builds and pushes whatever is missing on Docker Hub;
+- recipe push (`Dockerfile*`, `docker-entrypoint.sh`, `gildas_release.py`,
+  `gildas-*.def`): rebuilds on top of the new recipes;
+- manual dispatch (`Run workflow`, optional `release` / `debian` /
+  `piic` / `archive` inputs);
+- pull requests: print-only plan, no build, no push.
+
+Pushing needs two repo secrets: `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` (a Hub access token with Read & Write permissions).
+Builds reuse previously pushed layers (previous tags are pre-pulled),
+so unchanged images rebuild in minutes while a new release compiles
+from scratch (up to ~1 h per image, jobs run in parallel).
+
 ### Container entrypoint
 
 `docker-entrypoint.sh` sources `/etc/gildas-env.sh` (default GILDAS
