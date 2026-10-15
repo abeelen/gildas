@@ -27,8 +27,9 @@ plan:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
   before_script:
-    - pip install -q --break-system-packages click requests beautifulsoup4
+    - pip install -q --break-system-packages click requests beautifulsoup4 pytest
   script:
+    - python -m pytest tests/ -q
     - ./gildas_release.py
     - ./gildas_release.py --debian
 

@@ -1,0 +1,180 @@
+"""Offline tests for gildas_release.py (no network: fake ReleaseSets throughout)."""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from gildas_release import (  # noqa: E402
+    SECTION_WITH_PIIC,
+    SECTION_WITHOUT_PIIC,
+    BuildCommand,
+    ReleaseSets,
+    _image_tag,
+    _tag_suffix,
+    build_with_piic_command,
+    build_without_piic_command,
+    get_build_commands,
+    get_natif_commands,
+    get_release_build_commands,
+    imager_version_for_release,
+    natif_command,
+    singularity_command,
+)
+
+
+def make_sets(**overrides):
+    base = dict(
+        tags=[],
+        gildas=["oct26a"],
+        archived_gildas=["jul26a"],
+        piic=["jul26a"],
+        archived_piic=["mar26a"],
+    )
+    base.update(overrides)
+    return ReleaseSets(**base)
+
+
+def test_tag_suffix():
+    assert _tag_suffix("Dockerfile.alpine") == ""
+    assert _tag_suffix("Dockerfile") == "-debian"
+    assert _tag_suffix("Dockerfile.custom") == "-debian"
+
+
+def test_image_tag():
+    assert _image_tag(BuildCommand(SECTION_WITHOUT_PIIC, "oct26a", False, "x", True)) == "oct26a"
+    assert _image_tag(BuildCommand(SECTION_WITHOUT_PIIC, "oct26a", False, "x", False)) == "oct26a-debian"
+    assert _image_tag(BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)) == "jul26a-piic"
+    assert _image_tag(BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", False)) == "jul26a-piic-debian"
+
+
+def test_imager_version_mapping():
+    assert imager_version_for_release("oct26a", ["oct26", "jul26"]) == "oct26"
+    assert imager_version_for_release("oct26a", ["jul26"]) == "last"
+    assert imager_version_for_release("oct26", ["oct26"]) == "oct26"
+
+
+def test_build_without_piic_alpine_is_default():
+    cmd = build_without_piic_command(["oct26a"], [], "oct26a", imager_version="oct26")
+    assert "--tag abeelen/gildas:oct26a " in cmd
+    assert "-f Dockerfile.alpine ." in cmd
+    assert "--target gildas" in cmd
+    assert "--build-arg IMAGER_VERSION=oct26" in cmd
+    assert "latest" not in cmd
+
+
+def test_build_without_piic_latest_and_debian():
+    cmd = build_without_piic_command(
+        ["oct26a"], [], "oct26a", dockerfile="Dockerfile", tag_latest=True, imager_version="oct26"
+    )
+    assert "--tag abeelen/gildas:oct26a-debian" in cmd
+    assert "--tag abeelen/gildas:latest-debian" in cmd
+    assert "-f Dockerfile ." in cmd
+
+
+def test_build_with_piic_needs_both_tarballs():
+    # No PIIC tarball -> no command.
+    assert (
+        build_with_piic_command(["oct26a"], [], ["jul26a"], [], "oct26a", imager_version="oct26")
+        is None
+    )
+    # No GILDAS tarball -> no command.
+    assert (
+        build_with_piic_command(["oct26a"], [], ["oct26a"], [], "jul26a", imager_version="jul26")
+        is None
+    )
+    # Archived GILDAS + main PIIC -> archive URL only for GILDAS.
+    cmd = build_with_piic_command(
+        ["oct26a"], ["jul26a"], ["jul26a"], [], "jul26a", imager_version="jul26"
+    )
+    assert "--tag abeelen/gildas:jul26a-piic " in cmd
+    assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd
+    assert "PIIC_URL" not in cmd
+
+
+def test_release_commands_pair_main_piic_with_archived_gildas():
+    cmds = get_release_build_commands(
+        "jul26a", sets=make_sets(), archive_gildas=True, imager_version="jul26"
+    )
+    piic = [c for c in cmds if c.section == SECTION_WITH_PIIC]
+    assert len(piic) == 1
+    assert "GILDAS_URL=" in piic[0].command and "PIIC_URL" not in piic[0].command
+
+
+def test_archived_gildas_ignored_without_flag():
+    # Same fixture, no flag: jul26a is unknown -> no commands at all.
+    assert (
+        get_release_build_commands("jul26a", sets=make_sets(), imager_version="jul26") == []
+    )
+
+
+def test_missing_only_hides_present_tags():
+    sets = make_sets(tags=["oct26a"])
+    cmds = get_release_build_commands("oct26a", missing_only=True, sets=sets, imager_version="oct26")
+    assert cmds == []
+    cmds = get_release_build_commands("oct26a", missing_only=False, sets=sets, imager_version="oct26")
+    assert len(cmds) == 1 and cmds[0].in_dockerhub
+
+
+def test_latest_tracked_per_family(monkeypatch):
+    import gildas_release as gr
+
+    monkeypatch.setattr(gr, "_load_release_sets", lambda *a, **k: make_sets(tags=[]))
+    cmds = get_build_commands(archive_gildas=True, imager_version="oct26")
+    by_release = {}
+    for c in cmds:
+        by_release.setdefault(c.release, []).append(c)
+    # Newest GILDAS (oct26a) gets :latest ...
+    gildas_cmd = next(c for c in by_release["oct26a"] if c.section == SECTION_WITHOUT_PIIC)
+    assert gildas_cmd.command.endswith("docker push abeelen/gildas:latest")
+    # ... but not :latest-piic (no PIIC tarball for oct26a) ...
+    for c in by_release["oct26a"]:
+        assert "latest-piic" not in c.command
+    # ... while newest with PIIC (jul26a) gets :latest-piic.
+    piic_cmd = next(c for c in by_release["jul26a"] if c.section == SECTION_WITH_PIIC)
+    assert piic_cmd.command.endswith("docker push abeelen/gildas:latest-piic")
+
+
+def test_natif_command_bundles_piic_when_available():
+    sets = make_sets()
+    cmd = natif_command("jul26a", sets, imager_version="jul26")
+    assert cmd is not None and cmd.has_piic
+    assert "PIIC_URL=https://www.iram.fr/~gildas/dist/archive/piic" not in cmd.command
+    assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd.command
+    assert "gildas-natif-alpine.def" in cmd.command
+    cmd = natif_command("oct26a", sets, imager_version="oct26")
+    assert cmd is not None and not cmd.has_piic
+    assert natif_command("nosuch", sets) is None
+
+
+def test_natif_debian_deffile():
+    sets = make_sets()
+    cmd = natif_command("oct26a", sets, dockerfile="Dockerfile", imager_version="oct26")
+    assert cmd is not None and "gildas-natif.def" in cmd.command
+    assert "alpine" not in cmd.command
+
+
+def test_natif_commands_follow_loaded_sets():
+    full = make_sets(archived_gildas=["jul26a", "mar26a"])  # as if loaded with archives
+    cmds = get_natif_commands(sets=full, imager_version="jul26")
+    assert {c.release for c in cmds} >= {"oct26a", "jul26a", "mar26a"}
+    main_only = make_sets(archived_gildas=[], archived_piic=[])
+    cmds = get_natif_commands(sets=main_only, imager_version="oct26")
+    assert [c.release for c in cmds] == ["oct26a"]
+
+
+def test_singularity_command():
+    cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)
+    assert singularity_command(cmd) == "singularity build gildas-jul26a-piic.sif docker://abeelen/gildas:jul26a-piic"
+
+
+def test_print_missing_piic_only(monkeypatch, capsys):
+    import gildas_release as gr
+
+    monkeypatch.setattr(gr, "_load_release_sets", lambda *a, **k: make_sets())
+    gr.print_missing_build_commands(imager_version="oct26", piic_only=True, archive_gildas=True)
+    out = capsys.readouterr().out
+    assert "# With piic" in out
+    assert "# Without piic" not in out
