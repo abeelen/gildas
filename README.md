@@ -357,10 +357,9 @@ Typical usage:
 ./gildas_release.py --piic --archive
 ./gildas_release.py --release jul26a --piic
 
-# Commands for a single release (and its -piic variant if available).
-# Tags `latest` by default; opt out with --no-tag-latest.
+# Commands for a single release (and its -piic variant if available),
+# always tagging `latest`.
 ./gildas_release.py --release jan26a
-./gildas_release.py --release jan26a --no-tag-latest
 
 # Singularity: emit `singularity build ... docker://...` commands
 # (lists all known releases, since SIFs pull from Docker Hub)
@@ -376,10 +375,8 @@ Typical usage:
 ./gildas_release.py --natif --archive
 ./gildas_release.py --release jan26a --natif
 
-# Debian variants, custom repo/Dockerfile, JSON output, direct execution
+# Debian variants and direct execution
 ./gildas_release.py --debian
-./gildas_release.py --repo myuser/gildas --dockerfile Dockerfile.custom
-./gildas_release.py --json
 ./gildas_release.py --release jan26a --execute
 ./gildas_release.py -v   # info logs, -vv for debug
 ```
@@ -391,8 +388,8 @@ necessary. Commands no longer use `export release=...;$release` shell
 tricks: the release is inlined and quoted, empty `--build-arg`s are
 dropped, and `latest*` tags go to the newest release per family
 (`latest` for GILDAS, `latest-piic` for GILDAS+PIIC, tracked
-independently; single `--release` tags `latest` by default, opt out
-with `--no-tag-latest`). Archived releases are excluded unless
+independently; single `--release` always tags `latest`). Archived
+releases are excluded unless
 `--archive` is given (PIIC commands often need it, as PIIC releases lag
 behind GILDAS ones — see `--piic` above).
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import functools
-import json
 import logging
 import shlex
 import subprocess
@@ -159,25 +158,16 @@ def imager_version_for_release(release: str, available: Sequence[str] | None = N
     return IMAGER_LAST
 
 
-def _docker_tags(repo: str = DOCKER_REPO) -> List[str]:
+def _docker_tags() -> List[str]:
     """Return existing tags for the Docker repository.
 
     Follows Docker Hub pagination instead of assuming a single page.
-
-    Parameters
-    ----------
-    repo : str, optional
-        Docker Hub repository in the form ``"user/image"``. Defaults to
-        ``DOCKER_REPO``.
-
-    Returns
-    -------
-    list of str
-        All tags present on Docker Hub.
     """
 
     tags: List[str] = []
-    url: str | None = f"https://registry.hub.docker.com/v2/repositories/{repo}/tags/?page_size=100"
+    url: str | None = (
+        f"https://registry.hub.docker.com/v2/repositories/{DOCKER_REPO}/tags/?page_size=100"
+    )
     while url:
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
@@ -288,7 +278,7 @@ class ReleaseSets:
 
 
 def _load_release_sets_uncached(
-    repo: str = DOCKER_REPO, include_archive: bool = False, archive_gildas: bool = False
+    include_archive: bool = False, archive_gildas: bool = False
 ) -> ReleaseSets:
     """Fetch Docker tags + IRAM listings in parallel.
 
@@ -300,7 +290,7 @@ def _load_release_sets_uncached(
 
     query_arch_gildas = include_archive or archive_gildas
     with ThreadPoolExecutor(max_workers=5) as pool:
-        f_tags = pool.submit(_docker_tags, repo)
+        f_tags = pool.submit(_docker_tags)
         f_gildas = pool.submit(gildas_release, "gildas")
         f_piic = pool.submit(gildas_release, "piic")
         if query_arch_gildas:
@@ -321,16 +311,33 @@ def _load_release_sets_uncached(
 
 
 @functools.lru_cache(maxsize=8)
-def _load_release_sets(
-    repo: str = DOCKER_REPO, include_archive: bool = False, archive_gildas: bool = False
-) -> ReleaseSets:
+def _load_release_sets(include_archive: bool = False, archive_gildas: bool = False) -> ReleaseSets:
     """Load Docker tags and known releases for GILDAS and PIIC (cached)."""
-    return _load_release_sets_uncached(repo, include_archive, archive_gildas)
+    return _load_release_sets_uncached(include_archive, archive_gildas)
 
 
 def _join_parts(parts: List[str]) -> str:
     """Join command parts, dropping empty ``--build-arg`` fragments."""
     return " ".join(p for p in parts if p)
+
+
+def _docker_build_push(
+    main_tag: str,
+    latest_tag: str,
+    middle_args: Sequence[str],
+    dockerfile: str,
+    tag_latest: bool,
+) -> str:
+    """Assemble a ``docker build ... && docker push ...`` command string."""
+
+    parts = ["docker build", f"--tag {DOCKER_REPO}:{main_tag}"]
+    if tag_latest:
+        parts.append(f"--tag {DOCKER_REPO}:{latest_tag}")
+    parts += [*middle_args, f"-f {shlex.quote(dockerfile)} ."]
+    push = f"docker push {DOCKER_REPO}:{main_tag}"
+    if tag_latest:
+        push += f" && docker push {DOCKER_REPO}:{latest_tag}"
+    return f"{_join_parts(parts)} && {push}"
 
 
 def _tag_suffix(dockerfile: str) -> str:
@@ -346,8 +353,7 @@ def build_without_piic_command(
     gildas: Sequence[str],
     archived_gildas: Sequence[str],
     release: str,
-    dockerfile: str = "Dockerfile",
-    repo: str = DOCKER_REPO,
+    dockerfile: str = "Dockerfile.alpine",
     tag_latest: bool = False,
     imager_version: str | None = None,
 ) -> str:
@@ -365,29 +371,17 @@ def build_without_piic_command(
     if imager_version is None:
         imager_version = imager_version_for_release(release)
 
-    is_alpine = dockerfile.endswith("alpine")
     suffix = _tag_suffix(dockerfile)
     main_tag = f"{release}{suffix}"
     latest_tag = f"latest{suffix}"
 
     parts = [
-        "docker build",
-        f"--tag {repo}:{main_tag}",
-    ]
-    if tag_latest:
-        parts.append(f"--tag {repo}:{latest_tag}")
-    parts += [
         "--target gildas",
         arg,
         f"--build-arg release={shlex.quote(release)}",
         f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
-        f"-f {shlex.quote(dockerfile)} .",
     ]
-    cmd = _join_parts(parts)
-    push = f"docker push {repo}:{main_tag}"
-    if tag_latest:
-        push += f" && docker push {repo}:{latest_tag}"
-    return f"{cmd} && {push}"
+    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest)
 
 
 def build_with_piic_command(
@@ -396,8 +390,7 @@ def build_with_piic_command(
     piic: Sequence[str],
     archived_piic: Sequence[str],
     release: str,
-    dockerfile: str = "Dockerfile",
-    repo: str = DOCKER_REPO,
+    dockerfile: str = "Dockerfile.alpine",
     tag_latest: bool = False,
     imager_version: str | None = None,
 ) -> str | None:
@@ -435,30 +428,18 @@ def build_with_piic_command(
     if imager_version is None:
         imager_version = imager_version_for_release(release)
 
-    is_alpine = dockerfile.endswith("alpine")
     suffix = _tag_suffix(dockerfile)
     main_tag = f"{release}-piic{suffix}"
     latest_tag = f"latest-piic{suffix}"
 
     parts = [
-        "docker build",
-        f"--tag {repo}:{main_tag}",
-    ]
-    if tag_latest:
-        parts.append(f"--tag {repo}:{latest_tag}")
-    parts += [
         "--target gildas-piic",
         g_arg,
         p_arg,
         f"--build-arg release={shlex.quote(release)}",
         f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
-        f"-f {shlex.quote(dockerfile)} .",
     ]
-    cmd = _join_parts(parts)
-    push = f"docker push {repo}:{main_tag}"
-    if tag_latest:
-        push += f" && docker push {repo}:{latest_tag}"
-    return f"{cmd} && {push}"
+    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest)
 
 
 @dataclass
@@ -476,7 +457,6 @@ def get_release_build_commands(
     release_name: str,
     missing_only: bool = False,
     dockerfile: str = "Dockerfile.alpine",
-    repo: str = DOCKER_REPO,
     tag_latest: bool = False,
     sets: ReleaseSets | None = None,
     tag_latest_piic: bool | None = None,
@@ -498,7 +478,7 @@ def get_release_build_commands(
         tag_latest_piic = tag_latest
 
     if sets is None:
-        sets = _load_release_sets(repo, include_archive, archive_gildas)
+        sets = _load_release_sets(include_archive, archive_gildas)
     tags = sets.tags
     gildas = sets.gildas
     archived_gildas = sets.archived_gildas if (include_archive or archive_gildas) else []
@@ -517,7 +497,6 @@ def get_release_build_commands(
             archived_gildas,
             release_name,
             dockerfile=dockerfile,
-            repo=repo,
             tag_latest=tag_latest,
             imager_version=imager_version,
         )
@@ -544,7 +523,6 @@ def get_release_build_commands(
             archived_piic,
             release_name,
             dockerfile=dockerfile,
-            repo=repo,
             tag_latest=tag_latest_piic,
             imager_version=imager_version,
         )
@@ -569,7 +547,6 @@ def get_release_build_commands(
 def get_build_commands(
     missing_only: bool = False,
     dockerfile: str = "Dockerfile.alpine",
-    repo: str = DOCKER_REPO,
     tag_latest: bool | None = None,
     include_archive: bool = False,
     archive_gildas: bool = False,
@@ -584,7 +561,7 @@ def get_build_commands(
     Pass True to tag every command with ``latest``, False for none.
     """
 
-    sets = _load_release_sets(repo, include_archive, archive_gildas)
+    sets = _load_release_sets(include_archive, archive_gildas)
     # Deduplicate: the same release appears in main+archive and gildas+piic.
     all_releases = sorted(
         set(sets.archived_gildas) | set(sets.gildas) | set(sets.archived_piic) | set(sets.piic),
@@ -612,8 +589,7 @@ def get_build_commands(
                 release,
                 missing_only=missing_only,
                 dockerfile=dockerfile,
-                repo=repo,
-                tag_latest=g_latest,
+                    tag_latest=g_latest,
                 tag_latest_piic=p_latest,
                 sets=sets,
                 include_archive=include_archive,
@@ -639,7 +615,7 @@ class NatifCommand:
 def natif_command(
     release: str,
     sets: ReleaseSets,
-    dockerfile: str = "Dockerfile",
+    dockerfile: str = "Dockerfile.alpine",
     imager_version: str | None = None,
 ) -> NatifCommand | None:
     """Return the native SIF build command for a release, if buildable.
@@ -676,7 +652,6 @@ def natif_command(
 
 def get_natif_commands(
     dockerfile: str = "Dockerfile.alpine",
-    repo: str = DOCKER_REPO,
     include_archive: bool = False,
     archive_gildas: bool = False,
     sets: ReleaseSets | None = None,
@@ -685,7 +660,7 @@ def get_natif_commands(
     """Return native SIF build commands for all known releases."""
 
     if sets is None:
-        sets = _load_release_sets(repo, include_archive, archive_gildas)
+        sets = _load_release_sets(include_archive, archive_gildas)
     all_releases = sorted(
         set(sets.archived_gildas) | set(sets.gildas) | set(sets.archived_piic) | set(sets.piic),
         key=_release_sort_key,
@@ -717,18 +692,41 @@ def _image_tag(cmd: BuildCommand) -> str:
     return cmd.release
 
 
-def singularity_command(cmd: BuildCommand, repo: str = DOCKER_REPO) -> str:
+def singularity_command(cmd: BuildCommand) -> str:
     """Return a `singularity build` command pulling the Docker Hub image."""
 
     tag = _image_tag(cmd)
-    image = repo.split("/")[-1]
-    return f"singularity build {image}-{tag}.sif docker://{repo}:{tag}"
+    image = DOCKER_REPO.split("/")[-1]
+    return f"singularity build {image}-{tag}.sif docker://{DOCKER_REPO}:{tag}"
 
 
-def _render_command(cmd: BuildCommand, repo: str, singularity: bool) -> str:
+def _render_command(cmd: BuildCommand, singularity: bool) -> str:
     """Return the printable/runnable command for a build entry."""
 
-    return singularity_command(cmd, repo) if singularity else cmd.command
+    return singularity_command(cmd) if singularity else cmd.command
+
+
+def _print_command_sections(
+    commands: List[BuildCommand], singularity: bool, execute: bool, piic_only: bool
+) -> None:
+    """Print Without/With-piic sections, skipping empty ones (honors --piic)."""
+    sections = ((SECTION_WITHOUT_PIIC, "# Without piic"), (SECTION_WITH_PIIC, "# With piic"))
+    if piic_only:
+        sections = sections[1:]
+    for section, title in sections:
+        section_cmds = sorted(
+            [c for c in commands if c.section == section],
+            key=lambda c: _release_sort_key(c.release),
+        )
+        if not section_cmds:
+            continue
+        print(title)
+        for cmd in section_cmds:
+            print(_format_comment(cmd))
+            rendered = _render_command(cmd, singularity)
+            print(rendered)
+            if execute:
+                subprocess.run(rendered, shell=True, check=True)
 
 
 def _format_comment(cmd: BuildCommand) -> str:
@@ -751,8 +749,6 @@ def _format_comment(cmd: BuildCommand) -> str:
 
 def print_natif_build_commands(
     dockerfile: str = "Dockerfile.alpine",
-    repo: str = DOCKER_REPO,
-    as_json: bool = False,
     execute: bool = False,
     include_archive: bool = False,
     imager_version: str | None = None,
@@ -763,32 +759,12 @@ def print_natif_build_commands(
 
     commands = get_natif_commands(
         dockerfile=dockerfile,
-        repo=repo,
         include_archive=include_archive,
         archive_gildas=archive_gildas,
         imager_version=imager_version,
     )
     if piic_only:
         commands = [c for c in commands if c.has_piic]
-
-    if as_json:
-        print(
-            json.dumps(
-                [
-                    {
-                        "section": "natif",
-                        "release": c.release,
-                        "has_piic": c.has_piic,
-                        "alpine": c.alpine,
-                        "imager_version": c.imager_version,
-                        "command": c.command,
-                    }
-                    for c in commands
-                ],
-                indent=2,
-            )
-        )
-        return
 
     print("# Natif (from tarballs, PIIC bundled when available)")
     for cmd in commands:
@@ -801,9 +777,6 @@ def print_natif_build_commands(
 def print_missing_build_commands(
     force: bool = False,
     dockerfile: str = "Dockerfile.alpine",
-    repo: str = DOCKER_REPO,
-    tag_latest: bool | None = None,
-    as_json: bool = False,
     execute: bool = False,
     include_archive: bool = False,
     singularity: bool = False,
@@ -831,8 +804,6 @@ def print_missing_build_commands(
     if natif:
         print_natif_build_commands(
             dockerfile=dockerfile,
-            repo=repo,
-            as_json=as_json,
             execute=execute,
             include_archive=include_archive,
             imager_version=imager_version,
@@ -844,52 +815,12 @@ def print_missing_build_commands(
     commands = get_build_commands(
         missing_only=not force and not singularity,
         dockerfile=dockerfile,
-        repo=repo,
-        tag_latest=tag_latest,
         include_archive=include_archive,
         archive_gildas=archive_gildas,
         imager_version=imager_version,
     )
 
-    if as_json:
-        print(
-            json.dumps(
-                [
-                    {
-                        "section": c.section,
-                        "release": c.release,
-                        "in_dockerhub": c.in_dockerhub,
-                        "alpine": c.alpine,
-                        "command": _render_command(c, repo, singularity),
-                    }
-                    for c in commands
-                    if not piic_only or c.section == SECTION_WITH_PIIC
-                ],
-                indent=2,
-            )
-        )
-        return
-
-    without_piic = sorted(
-        [cmd for cmd in commands if cmd.section == SECTION_WITHOUT_PIIC],
-        key=lambda c: _release_sort_key(c.release),
-    )
-    with_piic = sorted(
-        [cmd for cmd in commands if cmd.section == SECTION_WITH_PIIC],
-        key=lambda c: _release_sort_key(c.release),
-    )
-
-    sections = ((with_piic, "# With piic"),) if piic_only else ((without_piic, "# Without piic"), (with_piic, "# With piic"))
-    for section_cmds, title in sections:
-        if not section_cmds:
-            continue
-        print(title)
-        for cmd in section_cmds:
-            print(_format_comment(cmd))
-            rendered = _render_command(cmd, repo, singularity)
-            print(rendered)
-            if execute:
-                subprocess.run(rendered, shell=True, check=True)
+    _print_command_sections(commands, singularity, execute, piic_only)
 
 
 @click.command()
@@ -923,25 +854,6 @@ def print_missing_build_commands(
     help="Only emit PIIC build commands. Pairs main-tree PIIC releases with GILDAS from main or archive (add --archive to also search PIIC in the archives).",
 )
 @click.option(
-    "--dockerfile",
-    "dockerfile_opt",
-    default=None,
-    help="Dockerfile to use (overrides the Alpine default / --debian).",
-)
-@click.option(
-    "--repo",
-    "repo",
-    default=DOCKER_REPO,
-    show_default=True,
-    help="Docker Hub repository (user/image).",
-)
-@click.option(
-    "--tag-latest/--no-tag-latest",
-    "tag_latest",
-    default=None,
-    help="Also tag/push 'latest'. Default: newest release per family gets 'latest'; single --release always tags.",
-)
-@click.option(
     "--archive",
     "include_archive",
     is_flag=True,
@@ -969,12 +881,6 @@ def print_missing_build_commands(
     help="Pin the coupled IMAGER version (default: auto-mapped from the release, e.g. oct26a -> oct26, fallback 'last').",
 )
 @click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit machine-readable JSON instead of shell commands.",
-)
-@click.option(
     "--execute",
     is_flag=True,
     help="Run the generated docker build/push commands instead of only printing them.",
@@ -985,10 +891,6 @@ def main(
     force: bool = False,
     debian: bool = False,
     piic_only: bool = False,
-    dockerfile_opt: str | None = None,
-    repo: str = DOCKER_REPO,
-    tag_latest: bool | None = None,
-    as_json: bool = False,
     execute: bool = False,
     include_archive: bool = False,
     singularity: bool = False,
@@ -1012,10 +914,7 @@ def main(
         level = logging.DEBUG
     logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
 
-    if dockerfile_opt:
-        dockerfile = dockerfile_opt
-    else:
-        dockerfile = "Dockerfile" if debian else "Dockerfile.alpine"
+    dockerfile = "Dockerfile" if debian else "Dockerfile.alpine"
 
     # PIIC releases lag behind GILDAS ones, so pairing a main-tree PIIC
     # with its GILDAS tarball usually requires the GILDAS archive.
@@ -1025,9 +924,6 @@ def main(
         print_missing_build_commands(
             force=force,
             dockerfile=dockerfile,
-            repo=repo,
-            tag_latest=tag_latest,
-            as_json=as_json,
             execute=execute,
             include_archive=include_archive,
             singularity=singularity,
@@ -1038,10 +934,8 @@ def main(
         )
         return
 
-    # Single release mode: tag latest by default (opt out with --no-tag-latest).
-    if tag_latest is None:
-        tag_latest = True
-    sets = _load_release_sets(repo, include_archive, archive_gildas)
+    # Single release mode always tags latest.
+    sets = _load_release_sets(include_archive, archive_gildas)
     all_known = set(sets.gildas) | set(sets.archived_gildas) | set(sets.piic) | set(sets.archived_piic)
     if release_name not in all_known:
         hint = "" if include_archive else " (retry with --archive for archived releases)"
@@ -1050,11 +944,6 @@ def main(
     if natif:
         cmd = natif_command(release_name, sets, dockerfile=dockerfile, imager_version=imager_version)
         if piic_only and (cmd is None or not cmd.has_piic):
-            if as_json:
-                print(json.dumps([]))
-            return
-        if as_json:
-            print(json.dumps([] if cmd is None else [{"release": cmd.release, "has_piic": cmd.has_piic, "alpine": cmd.alpine, "imager_version": cmd.imager_version, "command": cmd.command}], indent=2))
             return
         if cmd is None:
             return
@@ -1068,54 +957,14 @@ def main(
     commands = get_release_build_commands(
         release_name,
         dockerfile=dockerfile,
-        repo=repo,
-        tag_latest=tag_latest,
+        tag_latest=True,
         sets=sets,
         include_archive=include_archive,
         archive_gildas=archive_gildas,
         imager_version=imager_version,
     )
 
-    if as_json:
-        print(
-            json.dumps(
-                [
-                    {
-                        "section": c.section,
-                        "release": c.release,
-                        "in_dockerhub": c.in_dockerhub,
-                        "alpine": c.alpine,
-                        "command": _render_command(c, repo, singularity),
-                    }
-                    for c in commands
-                    if not piic_only or c.section == SECTION_WITH_PIIC
-                ],
-                indent=2,
-            )
-        )
-        return
-
-    if not piic_only and any(cmd.section == SECTION_WITHOUT_PIIC for cmd in commands):
-        print("# Without piic")
-        for cmd in commands:
-            if cmd.section != SECTION_WITHOUT_PIIC:
-                continue
-            print(_format_comment(cmd))
-            rendered = _render_command(cmd, repo, singularity)
-            print(rendered)
-            if execute:
-                subprocess.run(rendered, shell=True, check=True)
-
-    if any(cmd.section == SECTION_WITH_PIIC for cmd in commands):
-        print("# With piic")
-        for cmd in commands:
-            if cmd.section != SECTION_WITH_PIIC:
-                continue
-            print(_format_comment(cmd))
-            rendered = _render_command(cmd, repo, singularity)
-            print(rendered)
-            if execute:
-                subprocess.run(rendered, shell=True, check=True)
+    _print_command_sections(commands, singularity, execute, piic_only)
 
 
 if __name__ == "__main__":
