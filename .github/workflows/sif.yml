@@ -1,0 +1,59 @@
+# Convert Docker Hub tags to Singularity SIFs and attach them to the
+# rolling `sif-images` GitHub release.
+#
+# Manual dispatch converts the given tags (default: latest + latest-piic);
+# the weekly schedule rebuilds a tag only when its Hub push is newer than
+# the published asset (fail-open: any check failure rebuilds). Missing Hub
+# tags are skipped with a warning instead of failing the job.
+#
+# Uses eWaterCycle/setup-singularity with its default version; pin
+# `singularity-version` explicitly if a runner image ever breaks it.
+
+name: publish-sifs
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Hub tags to convert (space-separated)"
+        required: false
+        default: "latest latest-piic"
+  schedule:
+    - cron: "0 4 * * 5"
+
+permissions:
+  contents: write
+
+jobs:
+  sif:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: eWaterCycle/setup-singularity@v2
+      - name: Build SIFs and upload to the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAGS="${{ inputs.tags }}"
+          [ -z "$TAGS" ] && TAGS="latest latest-piic"
+          gh release view sif-images >/dev/null 2>&1 || \
+            gh release create sif-images --title "Singularity images (rolling)" \
+              --notes "SIF images converted from Docker Hub tags. Rebuilt when the tags move."
+          for tag in $TAGS; do
+            sif="gildas-$tag.sif"
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              pushed=$(curl -s "https://hub.docker.com/v2/repositories/abeelen/gildas/tags/$tag" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_last_pushed',''))" 2>/dev/null || true)
+              updated=$(gh api "repos/{owner}/{repo}/releases/tags/sif-images" --jq ".assets[] | select(.name==\"$sif\") | .updated_at" 2>/dev/null || true)
+              if [ -n "$pushed" ] && [ -n "$updated" ] && [ "$updated" \> "$pushed" ]; then
+                echo "$tag unchanged since $updated, skipping."
+                continue
+              fi
+            fi
+            rm -f "$sif"
+            if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
+              gh release upload sif-images "$sif" --clobber
+            else
+              echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
+            fi
+            rm -f "$sif"
+          done
