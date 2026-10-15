@@ -5,7 +5,7 @@
 - Standalone IMAGER bundled in all images (`/imager-exe`, `WITH_IMAGER`/`IMAGER_VERSION`/`IMAGER_URL` build args): `Dockerfile`, `Dockerfile.alpine`, `gildas-natif.def`, `gildas-natif-alpine.def`
 - Direct access to every program by bare name, no env switching for users: self-contained `/usr/local/bin` wrappers for all IMAGER-only and PIIC-only programs (never shadowing a GILDAS program); `gag*` functions, `GILDAS_FLAVOR` and the `bash -c` command shim removed from `docker-entrypoint.sh` and all `.def` runscripts/appruns (now: source env, `exec "$@"`)
 - Alpine is the default base image: unsuffixed tags (`latest`, `jan26a`, `latest-piic`) are Alpine, Debian moved to `-debian` tags (`gildas_release.py --debian`); `--piic` lists only PIIC commands, pairing main-tree PIIC with GILDAS from main or archive (`--archive` also searches PIIC in the archives)
-- GitHub Actions workflow (`.github/workflows/build.yml`): weekly + recipe-push + manual builds via `gildas_release.py --execute`, print-only plan on pull requests
+- GitHub Actions workflow (`.github/workflows/build.yml`) and GitLab pipeline (`.gitlab-ci.yml`): weekly + recipe-push + manual builds via `gildas_release.py --execute`, print-only plan on pull/merge requests
 - `gildas_release.py --singularity`: emit `singularity build ... docker://...` commands
 - `gildas_release.py --natif`: emit native `singularity build ... .def` commands (archive URLs auto-resolved)
 - GILDAS/IMAGER coupling in `gildas_release.py`: `imager_release()` lists upstream IMAGER versions, each release auto-maps (`oct26a` → `IMAGER_VERSION=oct26`, fallback `last` + warning, `--imager-version` override)
