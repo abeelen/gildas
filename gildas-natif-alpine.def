@@ -285,7 +285,11 @@ From: alpine:latest
         build-base \
         linux-headers || true
 
-    rm -rf /usr/share/doc /usr/share/man /tmp/* /var/tmp/* /root/.cache
+    # NOTE: never glob /tmp or /var/tmp here: under `singularity build`
+    # those hold the builder's own busy mounts (resolv.conf, proc, sys
+    # ...) and rm aborts on them. /tmp only ever holds our own downloads,
+    # all removed right after use above.
+    rm -rf /usr/share/doc /usr/share/man /root/.cache
 
 %runscript
     # Source the GILDAS environment (same file as in the Docker images).

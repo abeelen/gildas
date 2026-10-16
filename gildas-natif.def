@@ -264,7 +264,10 @@ From: debian:stable-slim
 
     apt-get autoremove -y || true
     apt-get clean
-    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info /tmp/* /var/tmp/*
+    # NOTE: never glob /tmp or /var/tmp here: under `singularity build`
+    # those hold the builder's own busy mounts (resolv.conf, proc, sys
+    # ...) and rm aborts on them.
+    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info
 
 %runscript
     # Source the GILDAS environment (same file as in the Docker images).

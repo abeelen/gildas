@@ -8,6 +8,7 @@
 - Self-describing images: `abeelen.gildas.*` labels plus authoritative `/etc/imager-version` / `/etc/piic-version` files in all four recipes
 - IMAGER-drift self-healing: the floating `last` is resolved to a concrete version at build time, and `gildas_release.py` rebuilds main-tree tags whose image label no longer matches the expected IMAGER version
 - Native builds require `SINGULARITYENV_*` variables (plain `VAR=...` never reaches `%post`); missing `:=` defaults added to `gildas-natif-alpine.def`, script and README fixed accordingly
+- Never glob `/tmp` or `/var/tmp` in def `%post` cleanup: under `singularity build` those hold the builder's own busy mounts and `rm` aborts on them (killed a full native compile at the trim step)
 - GitHub Actions workflow (`.github/workflows/build.yml`) and GitLab pipeline (`.gitlab-ci.yml`): weekly + recipe-push + manual builds via `gildas_release.py --execute`, print-only plan on pull/merge requests; GitLab mirrors `latest` to its container registry
 - SIF publishing (`.github/workflows/sif.yml`): Hub tags converted to Singularity images on the rolling `sif-images` GitHub release, plus on-demand native SIF builds from the tarballs; GitLab `sif` job publishes conversions to the generic package registry
 - Offline pytest suite for `gildas_release.py` (`tests/`, run in both CIs); script simplified to 971 lines (`--json`, `--repo`/`--dockerfile`, `--no-tag-latest` dropped)
