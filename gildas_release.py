@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import functools
 import logging
+import re
 import shlex
 import subprocess
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import List, Sequence
@@ -151,11 +153,129 @@ def imager_version_for_release(release: str, available: Sequence[str] | None = N
     """
     if available is None:
         available = _cached_imager_versions()
+        live = True
+    else:
+        live = False
     candidate = release[:-1] if release[-1:].isalpha() else release
     if candidate in available:
         return candidate
+    if live:
+        # Brand-new GILDAS without a matching IMAGER yet: resolve the
+        # floating alias to whatever it points to *now*, so the image
+        # records a concrete version and later drift is detectable.
+        resolved = _resolve_imager_alias(IMAGER_LAST)
+        if resolved != IMAGER_LAST:
+            logger.warning(
+                "No matching IMAGER version for release '%s', using '%s' (resolved '%s')",
+                release,
+                IMAGER_LAST,
+                resolved,
+            )
+            return resolved
     logger.warning("No matching IMAGER version for release '%s', using '%s'", release, IMAGER_LAST)
     return IMAGER_LAST
+
+
+@functools.lru_cache(maxsize=4)
+def _resolve_imager_alias(alias: str = IMAGER_LAST) -> str:
+    """Resolve a floating IMAGER version (e.g. ``last``) to a concrete one.
+
+    Streams only the start of ``imager-<alias>.tgz``: its first tar member
+    is the top-level ``imager-src-<version>`` directory. Returns the alias
+    unchanged when resolution fails (offline, unknown alias).
+    """
+    try:
+        with requests.get(f"{IMAGER_URL}/imager-{alias}.tgz", stream=True, timeout=REQUEST_TIMEOUT) as r:
+            r.raise_for_status()
+            r.raw.decode_content = True
+            with tarfile.open(fileobj=r.raw, mode="r|gz") as tar:
+                member = tar.next()
+                if member and member.name.startswith("imager-src-"):
+                    return member.name[len("imager-src-") :].strip("/")
+    except Exception as exc:
+        logger.debug("Could not resolve IMAGER alias '%s': %s", alias, exc)
+    return alias
+
+
+@functools.lru_cache(maxsize=32)
+def _image_labels(tag: str) -> dict | None:
+    """Return image config labels for a Hub tag, or None when unreadable.
+
+    Anonymous Bearer flow against the Hub registry. Any failure yields
+    None, which callers treat as fresh: network errors must never trigger
+    rebuilds.
+    """
+    try:
+        session = requests.Session()
+        manifest_url = f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{tag}"
+        headers = {
+            "Accept": ", ".join(
+                [
+                    "application/vnd.docker.distribution.manifest.v2+json",
+                    "application/vnd.oci.image.manifest.v1+json",
+                    "application/vnd.docker.distribution.manifest.list.v2+json",
+                    "application/vnd.oci.image.index.v1+json",
+                ]
+            )
+        }
+        r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 401:
+            auth = r.headers.get("WWW-Authenticate", "")
+            realm = re.search(r'realm="([^"]+)"', auth).group(1)
+            service = re.search(r'service="([^"]+)"', auth).group(1)
+            scope = re.search(r'scope="([^"]+)"', auth).group(1)
+            token = (
+                session.get(realm, params={"service": service, "scope": scope}, timeout=REQUEST_TIMEOUT)
+                .json()["token"]
+            )
+            headers["Authorization"] = f"Bearer {token}"
+            r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        manifest = r.json()
+        if "manifests" in manifest:  # multi-arch index: first entry wins
+            digest = manifest["manifests"][0]["digest"]
+            r = session.get(
+                f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{digest}",
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            r.raise_for_status()
+            manifest = r.json()
+        digest = manifest.get("config", {}).get("digest", "")
+        if not digest:
+            return None
+        blob = session.get(
+            f"https://registry-1.docker.io/v2/{DOCKER_REPO}/blobs/{digest}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        blob.raise_for_status()
+        return blob.json().get("config", {}).get("Labels") or {}
+    except Exception as exc:
+        logger.debug("Could not read labels of %s:%s: %s", DOCKER_REPO, tag, exc)
+        return None
+
+
+def _imager_stale(tag: str, expected: str) -> bool:
+    """True when a published tag bundles an outdated IMAGER.
+
+    Compares the expected (resolved, concrete) version against the
+    ``abeelen.gildas.imager-version`` image label. Unreadable labels
+    count as fresh (never rebuild on network errors); missing labels
+    count as stale (one-time catch-up for pre-label images); a floating
+    ``last`` on either side is uncomparable, hence fresh.
+    """
+    if expected == IMAGER_LAST:
+        return False
+    labels = _image_labels(tag)
+    if labels is None:
+        return False
+    recorded = labels.get("abeelen.gildas.imager-version", "")
+    if not recorded:
+        return True
+    if recorded == IMAGER_LAST:
+        return False
+    return recorded != expected
 
 
 def _docker_tags() -> List[str]:
@@ -451,6 +571,7 @@ class BuildCommand:
     in_dockerhub: bool
     command: str
     alpine: bool = False
+    stale_imager: bool = False
 
 
 def get_release_build_commands(
@@ -490,6 +611,12 @@ def get_release_build_commands(
     is_alpine = dockerfile.endswith("alpine")
     suffix = _tag_suffix(dockerfile)
 
+    # Resolve once so builders and the freshness check below agree.
+    expected_imager = imager_version or imager_version_for_release(release_name)
+    # Freshness only applies to main-tree releases: archived ones are
+    # immutable snapshots (their IMAGER version was pinned at build time).
+    check_fresh = release_name in gildas or release_name in piic
+
     # GILDAS only
     if release_name in gildas or release_name in archived_gildas:
         command = build_without_piic_command(
@@ -498,12 +625,13 @@ def get_release_build_commands(
             release_name,
             dockerfile=dockerfile,
             tag_latest=tag_latest,
-            imager_version=imager_version,
+            imager_version=expected_imager,
         )
         base_tag = f"{release_name}{suffix}"
         in_dockerhub = base_tag in tags
+        stale = check_fresh and in_dockerhub and _imager_stale(base_tag, expected_imager)
 
-        if not missing_only or not in_dockerhub:
+        if not missing_only or not in_dockerhub or stale:
             commands.append(
                 BuildCommand(
                     section=SECTION_WITHOUT_PIIC,
@@ -511,6 +639,7 @@ def get_release_build_commands(
                     in_dockerhub=in_dockerhub,
                     command=command,
                     alpine=is_alpine,
+                    stale_imager=stale,
                 )
             )
 
@@ -524,13 +653,14 @@ def get_release_build_commands(
             release_name,
             dockerfile=dockerfile,
             tag_latest=tag_latest_piic,
-            imager_version=imager_version,
+            imager_version=expected_imager,
         )
         if command:
             piic_tag = f"{release_name}-piic{suffix}"
             in_dockerhub = piic_tag in tags
+            stale = check_fresh and in_dockerhub and _imager_stale(piic_tag, expected_imager)
 
-            if not missing_only or not in_dockerhub:
+            if not missing_only or not in_dockerhub or stale:
                 commands.append(
                     BuildCommand(
                         section=SECTION_WITH_PIIC,
@@ -538,6 +668,7 @@ def get_release_build_commands(
                         in_dockerhub=in_dockerhub,
                         command=command,
                         alpine=is_alpine,
+                        stale_imager=stale,
                     )
                 )
 
@@ -735,11 +866,15 @@ def _format_comment(cmd: BuildCommand) -> str:
     tag = _image_tag(cmd)
 
     if cmd.section == SECTION_WITHOUT_PIIC:
+        if cmd.stale_imager and cmd.in_dockerhub:
+            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
         if cmd.in_dockerhub:
             return f"# * {tag} already in dockerhub :"
         return f"# * {tag} not in dockerhub"
 
     if cmd.section == SECTION_WITH_PIIC:
+        if cmd.stale_imager and cmd.in_dockerhub:
+            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
         if cmd.in_dockerhub:
             return f"# * {tag} already in dockerhub :"
         return f"# * {tag} not in dockerhub launch :"

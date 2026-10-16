@@ -251,10 +251,13 @@ Build args:
   IMAGER versions do not (`oct26`) — so never reuse the GILDAS
   release name here; leave `last` or pin an explicit IMAGER version.
   `gildas_release.py` couples them automatically (`oct26a` →
-  `--build-arg IMAGER_VERSION=oct26`, fallback `last` with a warning;
-  override with `--imager-version`). `IMAGER_URL` overrides its
-  download base (`https://share.oasu.u-bordeaux.fr/imager`). The
-  resolved version is recorded in the image at `/etc/imager-version`.
+  `--build-arg IMAGER_VERSION=oct26`; when no matching IMAGER exists
+  yet, the floating `last` is resolved to whatever it currently points
+  to, with a warning; override with `--imager-version`). `IMAGER_URL`
+  overrides its download base (`https://share.oasu.u-bordeaux.fr/imager`).
+  The resolved version is recorded in the image at
+  `/etc/imager-version` and in the `abeelen.gildas.imager-version`
+  label.
 - `GAG_USE_SANITIZE=no` (default): leave disabled (crashes otherwise).
 
 ### PIIC
@@ -397,6 +400,15 @@ independently; single `--release` always tags `latest`). Archived
 releases are excluded unless
 `--archive` is given (PIIC commands often need it, as PIIC releases lag
 behind GILDAS ones — see `--piic` above).
+
+Missing-tag detection also covers IMAGER drift, for main-tree
+releases: the script compares the expected IMAGER version (auto-mapped,
+`last` resolved to whatever it currently points to) against the
+`abeelen.gildas.imager-version` image label and re-emits the build when
+they differ — so a release built while its IMAGER was not out yet is
+rebuilt once the matching IMAGER appears. Unreadable labels never
+trigger rebuilds, pre-label images rebuild once, and archived releases
+are immutable snapshots matched by tag existence only.
 
 ### Automation (GitHub Actions)
 
