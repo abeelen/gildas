@@ -27,7 +27,10 @@ From: debian:stable-slim
 
     # Defaults for build-time environment variables. Note that the
     # %environment section is only used at runtime, so we must set
-    # sensible defaults again here for the build stage.
+    # sensible defaults again here for the build stage. Also, the host
+    # environment does NOT propagate into %post: pass variables as
+    # SINGULARITYENV_* when building (plain VAR=... prefixes are
+    # silently dropped, then set -u aborts).
     : "${GILDAS_RELEASE:=jan26a}"
     : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
     : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"
@@ -161,8 +164,10 @@ From: debian:stable-slim
     if curl -fSL --retry 3 --connect-timeout 20 \
             "${piic_url}/piic-exe-${release}.tar.xz" -o "/tmp/piic-exe-${release}.tar.xz"; then
         tar xJf "/tmp/piic-exe-${release}.tar.xz" && rm -f "/tmp/piic-exe-${release}.tar.xz"
+        echo "${release}" > /etc/piic-version
     else
         echo "WARNING: no piic-exe-${release}.tar.xz at ${piic_url}, skipping PIIC" >&2
+        echo "none (unresolved)" > /etc/piic-version
     fi
 
     # Auto-detect GAG_EXEC_SYSTEM instead of hardcoding
@@ -259,7 +264,10 @@ From: debian:stable-slim
 
     apt-get autoremove -y || true
     apt-get clean
-    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info /tmp/* /var/tmp/*
+    # NOTE: never glob /tmp or /var/tmp here: under `singularity build`
+    # those hold the builder's own busy mounts (resolv.conf, proc, sys
+    # ...) and rm aborts on them.
+    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info
 
 %runscript
     # Source the GILDAS environment (same file as in the Docker images).

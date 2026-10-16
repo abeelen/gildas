@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import functools
 import logging
+import re
 import shlex
 import subprocess
+import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Sequence
 
 import click
@@ -151,11 +154,129 @@ def imager_version_for_release(release: str, available: Sequence[str] | None = N
     """
     if available is None:
         available = _cached_imager_versions()
+        live = True
+    else:
+        live = False
     candidate = release[:-1] if release[-1:].isalpha() else release
     if candidate in available:
         return candidate
+    if live:
+        # Brand-new GILDAS without a matching IMAGER yet: resolve the
+        # floating alias to whatever it points to *now*, so the image
+        # records a concrete version and later drift is detectable.
+        resolved = _resolve_imager_alias(IMAGER_LAST)
+        if resolved != IMAGER_LAST:
+            logger.warning(
+                "No matching IMAGER version for release '%s', using '%s' (resolved '%s')",
+                release,
+                IMAGER_LAST,
+                resolved,
+            )
+            return resolved
     logger.warning("No matching IMAGER version for release '%s', using '%s'", release, IMAGER_LAST)
     return IMAGER_LAST
+
+
+@functools.lru_cache(maxsize=4)
+def _resolve_imager_alias(alias: str = IMAGER_LAST) -> str:
+    """Resolve a floating IMAGER version (e.g. ``last``) to a concrete one.
+
+    Streams only the start of ``imager-<alias>.tgz``: its first tar member
+    is the top-level ``imager-src-<version>`` directory. Returns the alias
+    unchanged when resolution fails (offline, unknown alias).
+    """
+    try:
+        with requests.get(f"{IMAGER_URL}/imager-{alias}.tgz", stream=True, timeout=REQUEST_TIMEOUT) as r:
+            r.raise_for_status()
+            r.raw.decode_content = True
+            with tarfile.open(fileobj=r.raw, mode="r|gz") as tar:
+                member = tar.next()
+                if member and member.name.startswith("imager-src-"):
+                    return member.name[len("imager-src-") :].strip("/")
+    except Exception as exc:
+        logger.debug("Could not resolve IMAGER alias '%s': %s", alias, exc)
+    return alias
+
+
+@functools.lru_cache(maxsize=32)
+def _image_labels(tag: str) -> dict | None:
+    """Return image config labels for a Hub tag, or None when unreadable.
+
+    Anonymous Bearer flow against the Hub registry. Any failure yields
+    None, which callers treat as fresh: network errors must never trigger
+    rebuilds.
+    """
+    try:
+        session = requests.Session()
+        manifest_url = f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{tag}"
+        headers = {
+            "Accept": ", ".join(
+                [
+                    "application/vnd.docker.distribution.manifest.v2+json",
+                    "application/vnd.oci.image.manifest.v1+json",
+                    "application/vnd.docker.distribution.manifest.list.v2+json",
+                    "application/vnd.oci.image.index.v1+json",
+                ]
+            )
+        }
+        r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 401:
+            auth = r.headers.get("WWW-Authenticate", "")
+            realm = re.search(r'realm="([^"]+)"', auth).group(1)
+            service = re.search(r'service="([^"]+)"', auth).group(1)
+            scope = re.search(r'scope="([^"]+)"', auth).group(1)
+            token = (
+                session.get(realm, params={"service": service, "scope": scope}, timeout=REQUEST_TIMEOUT)
+                .json()["token"]
+            )
+            headers["Authorization"] = f"Bearer {token}"
+            r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        r.raise_for_status()
+        manifest = r.json()
+        if "manifests" in manifest:  # multi-arch index: first entry wins
+            digest = manifest["manifests"][0]["digest"]
+            r = session.get(
+                f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{digest}",
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+            r.raise_for_status()
+            manifest = r.json()
+        digest = manifest.get("config", {}).get("digest", "")
+        if not digest:
+            return None
+        blob = session.get(
+            f"https://registry-1.docker.io/v2/{DOCKER_REPO}/blobs/{digest}",
+            headers=headers,
+            timeout=REQUEST_TIMEOUT,
+        )
+        blob.raise_for_status()
+        return blob.json().get("config", {}).get("Labels") or {}
+    except Exception as exc:
+        logger.debug("Could not read labels of %s:%s: %s", DOCKER_REPO, tag, exc)
+        return None
+
+
+def _imager_stale(tag: str, expected: str) -> bool:
+    """True when a published tag bundles an outdated IMAGER.
+
+    Compares the expected (resolved, concrete) version against the
+    ``abeelen.gildas.imager-version`` image label. Unreadable labels
+    count as fresh (never rebuild on network errors); missing labels
+    count as stale (one-time catch-up for pre-label images); a floating
+    ``last`` on either side is uncomparable, hence fresh.
+    """
+    if expected == IMAGER_LAST:
+        return False
+    labels = _image_labels(tag)
+    if labels is None:
+        return False
+    recorded = labels.get("abeelen.gildas.imager-version", "")
+    if not recorded:
+        return True
+    if recorded == IMAGER_LAST:
+        return False
+    return recorded != expected
 
 
 def _docker_tags() -> List[str]:
@@ -451,6 +572,7 @@ class BuildCommand:
     in_dockerhub: bool
     command: str
     alpine: bool = False
+    stale_imager: bool = False
 
 
 def get_release_build_commands(
@@ -490,6 +612,12 @@ def get_release_build_commands(
     is_alpine = dockerfile.endswith("alpine")
     suffix = _tag_suffix(dockerfile)
 
+    # Resolve once so builders and the freshness check below agree.
+    expected_imager = imager_version or imager_version_for_release(release_name)
+    # Freshness only applies to main-tree releases: archived ones are
+    # immutable snapshots (their IMAGER version was pinned at build time).
+    check_fresh = release_name in gildas or release_name in piic
+
     # GILDAS only
     if release_name in gildas or release_name in archived_gildas:
         command = build_without_piic_command(
@@ -498,12 +626,13 @@ def get_release_build_commands(
             release_name,
             dockerfile=dockerfile,
             tag_latest=tag_latest,
-            imager_version=imager_version,
+            imager_version=expected_imager,
         )
         base_tag = f"{release_name}{suffix}"
         in_dockerhub = base_tag in tags
+        stale = check_fresh and in_dockerhub and _imager_stale(base_tag, expected_imager)
 
-        if not missing_only or not in_dockerhub:
+        if not missing_only or not in_dockerhub or stale:
             commands.append(
                 BuildCommand(
                     section=SECTION_WITHOUT_PIIC,
@@ -511,6 +640,7 @@ def get_release_build_commands(
                     in_dockerhub=in_dockerhub,
                     command=command,
                     alpine=is_alpine,
+                    stale_imager=stale,
                 )
             )
 
@@ -524,13 +654,14 @@ def get_release_build_commands(
             release_name,
             dockerfile=dockerfile,
             tag_latest=tag_latest_piic,
-            imager_version=imager_version,
+            imager_version=expected_imager,
         )
         if command:
             piic_tag = f"{release_name}-piic{suffix}"
             in_dockerhub = piic_tag in tags
+            stale = check_fresh and in_dockerhub and _imager_stale(piic_tag, expected_imager)
 
-            if not missing_only or not in_dockerhub:
+            if not missing_only or not in_dockerhub or stale:
                 commands.append(
                     BuildCommand(
                         section=SECTION_WITH_PIIC,
@@ -538,6 +669,7 @@ def get_release_build_commands(
                         in_dockerhub=in_dockerhub,
                         command=command,
                         alpine=is_alpine,
+                        stale_imager=stale,
                     )
                 )
 
@@ -636,11 +768,16 @@ def natif_command(
     if imager_version is None:
         imager_version = imager_version_for_release(release)
 
-    env = [f"GILDAS_RELEASE={shlex.quote(release)}", f"IMAGER_VERSION={shlex.quote(imager_version)}"]
+    # NOTE: SINGULARITYENV_ prefix is required: plain VAR=... prefixes
+    # never reach %post (silently dropped), only SINGULARITYENV_* does.
+    env = [
+        f"SINGULARITYENV_GILDAS_RELEASE={shlex.quote(release)}",
+        f"SINGULARITYENV_IMAGER_VERSION={shlex.quote(imager_version)}",
+    ]
     if release not in sets.gildas:
-        env.append(f"GILDAS_URL={GILDAS_ARCHIVE_URL}")
+        env.append(f"SINGULARITYENV_GILDAS_URL={GILDAS_ARCHIVE_URL}")
     if has_piic and release not in sets.piic:
-        env.append(f"PIIC_URL={PIIC_ARCHIVE_URL}")
+        env.append(f"SINGULARITYENV_PIIC_URL={PIIC_ARCHIVE_URL}")
 
     alpine = dockerfile.endswith("alpine")
     deffile = "gildas-natif-alpine.def" if alpine else "gildas-natif.def"
@@ -676,7 +813,7 @@ def get_natif_commands(
 def _format_natif_comment(cmd: NatifCommand) -> str:
     """Return a human-readable comment line for a native build command."""
 
-    tag = f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
+    tag = _natif_tag(cmd)
     extra = " (+piic bundled)" if cmd.has_piic else " (no piic upstream)"
     return f"# * {tag}{extra} [imager {cmd.imager_version}]"
 
@@ -706,8 +843,33 @@ def _render_command(cmd: BuildCommand, singularity: bool) -> str:
     return singularity_command(cmd) if singularity else cmd.command
 
 
+def _run_logged(command: str, log_path: str | None = None, tail: int = 15) -> None:
+    """Run a shell command, optionally teeing output to a log file.
+
+    With ``log_path``, full output goes to the file (created with parents)
+    and only the last ``tail`` lines are printed, keeping CI logs under
+    their size limits. Failures raise after printing the tail.
+    """
+    if log_path is None:
+        subprocess.run(command, shell=True, check=True)
+        return
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+        proc = subprocess.run(command, shell=True, stdout=handle, stderr=subprocess.STDOUT)
+    print(f"# log: {path}")
+    for line in path.read_text(errors="replace").splitlines()[-tail:]:
+        print(line)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, command)
+
+
 def _print_command_sections(
-    commands: List[BuildCommand], singularity: bool, execute: bool, piic_only: bool
+    commands: List[BuildCommand],
+    singularity: bool,
+    execute: bool,
+    piic_only: bool,
+    log_dir: str | None = None,
 ) -> None:
     """Print Without/With-piic sections, skipping empty ones (honors --piic)."""
     sections = ((SECTION_WITHOUT_PIIC, "# Without piic"), (SECTION_WITH_PIIC, "# With piic"))
@@ -726,7 +888,8 @@ def _print_command_sections(
             rendered = _render_command(cmd, singularity)
             print(rendered)
             if execute:
-                subprocess.run(rendered, shell=True, check=True)
+                log = str(Path(log_dir) / f"{_image_tag(cmd)}.log") if log_dir else None
+                _run_logged(rendered, log)
 
 
 def _format_comment(cmd: BuildCommand) -> str:
@@ -735,16 +898,25 @@ def _format_comment(cmd: BuildCommand) -> str:
     tag = _image_tag(cmd)
 
     if cmd.section == SECTION_WITHOUT_PIIC:
+        if cmd.stale_imager and cmd.in_dockerhub:
+            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
         if cmd.in_dockerhub:
             return f"# * {tag} already in dockerhub :"
         return f"# * {tag} not in dockerhub"
 
     if cmd.section == SECTION_WITH_PIIC:
+        if cmd.stale_imager and cmd.in_dockerhub:
+            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
         if cmd.in_dockerhub:
             return f"# * {tag} already in dockerhub :"
         return f"# * {tag} not in dockerhub launch :"
 
     return f"# * {cmd.release}"
+
+
+def _natif_tag(cmd: NatifCommand) -> str:
+    """SIF tag implied by a native build command (mirrors its comment)."""
+    return f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
 
 
 def print_natif_build_commands(
@@ -754,6 +926,7 @@ def print_natif_build_commands(
     imager_version: str | None = None,
     piic_only: bool = False,
     archive_gildas: bool = False,
+    log_dir: str | None = None,
 ) -> None:
     """Print (or execute) native `singularity build ... .def` commands."""
 
@@ -771,7 +944,8 @@ def print_natif_build_commands(
         print(_format_natif_comment(cmd))
         print(cmd.command)
         if execute:
-            subprocess.run(cmd.command, shell=True, check=True)
+            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
+            _run_logged(cmd.command, log)
 
 
 def print_missing_build_commands(
@@ -784,6 +958,7 @@ def print_missing_build_commands(
     imager_version: str | None = None,
     piic_only: bool = False,
     archive_gildas: bool = False,
+    log_dir: str | None = None,
 ) -> None:
     """Print (or execute) docker commands for missing releases.
 
@@ -809,6 +984,7 @@ def print_missing_build_commands(
             imager_version=imager_version,
             piic_only=piic_only,
             archive_gildas=archive_gildas,
+            log_dir=log_dir,
         )
         return
 
@@ -820,7 +996,7 @@ def print_missing_build_commands(
         imager_version=imager_version,
     )
 
-    _print_command_sections(commands, singularity, execute, piic_only)
+    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
 
 
 @click.command()
@@ -885,6 +1061,12 @@ def print_missing_build_commands(
     is_flag=True,
     help="Run the generated docker build/push commands instead of only printing them.",
 )
+@click.option(
+    "--log-dir",
+    "log_dir",
+    default=None,
+    help="With --execute, tee each command's output to <dir>/<tag>.log and print only the tail (keeps CI logs under their size limits).",
+)
 def main(
     release_name: str | None = None,
     verbose: int = 0,
@@ -892,6 +1074,7 @@ def main(
     debian: bool = False,
     piic_only: bool = False,
     execute: bool = False,
+    log_dir: str | None = None,
     include_archive: bool = False,
     singularity: bool = False,
     natif: bool = False,
@@ -931,6 +1114,7 @@ def main(
             imager_version=imager_version,
             piic_only=piic_only,
             archive_gildas=archive_gildas,
+            log_dir=log_dir,
         )
         return
 
@@ -951,7 +1135,8 @@ def main(
         print(_format_natif_comment(cmd))
         print(cmd.command)
         if execute:
-            subprocess.run(cmd.command, shell=True, check=True)
+            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
+            _run_logged(cmd.command, log)
         return
 
     commands = get_release_build_commands(
@@ -964,7 +1149,7 @@ def main(
         imager_version=imager_version,
     )
 
-    _print_command_sections(commands, singularity, execute, piic_only)
+    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
 
 
 if __name__ == "__main__":

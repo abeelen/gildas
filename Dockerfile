@@ -214,10 +214,16 @@ RUN set -eux -o pipefail; \
       done; \
     fi
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && echo "none" > /etc/piic-version
 
 LABEL org.opencontainers.image.title="GILDAS" \
-      org.opencontainers.image.revision="${release}"
+      org.opencontainers.image.revision="${release}" \
+      abeelen.gildas.release="${release}" \
+      abeelen.gildas.base="debian" \
+      abeelen.gildas.target="gildas" \
+      abeelen.gildas.imager-version="${IMAGER_VERSION}"
+# NOTE: /etc/imager-version and /etc/piic-version inside the image are
+# authoritative for bundled component versions (labels record build args).
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["bash"]
@@ -237,8 +243,10 @@ WORKDIR /
 RUN set -eux -o pipefail; \
     if curl -fSL --retry 3 --connect-timeout 20 "$PIIC_URL/piic-exe-$release.tar.xz" -o "/tmp/piic-exe-$release.tar.xz"; then \
       tar xJf "/tmp/piic-exe-$release.tar.xz" && rm -f "/tmp/piic-exe-$release.tar.xz"; \
+      echo "$release" > /etc/piic-version; \
     else \
       echo "WARNING: no piic-exe-$release.tar.xz at $PIIC_URL, skipping PIIC layer" >&2; \
+      echo "none (unresolved)" > /etc/piic-version; \
     fi
 
 SHELL ["/bin/bash", "-c"]
@@ -268,3 +276,5 @@ RUN set -eux -o pipefail; \
         fi; \
       done; \
     fi
+
+LABEL abeelen.gildas.target="gildas-piic"

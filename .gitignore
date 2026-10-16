@@ -1,7 +1,8 @@
 # Local Singularity images (built artifacts, not sources)
 *.sif
-# Python bytecode
+# Python bytecode and caches
 __pycache__/
 *.pyc
+.pytest_cache/
 # Local build logs
 docker-build.log

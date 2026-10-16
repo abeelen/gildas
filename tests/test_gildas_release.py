@@ -110,8 +110,13 @@ def test_archived_gildas_ignored_without_flag():
     )
 
 
-def test_missing_only_hides_present_tags():
+def test_missing_only_hides_present_tags(monkeypatch):
+    import gildas_release as gr
+
     sets = make_sets(tags=["oct26a"])
+    monkeypatch.setattr(
+        gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "oct26"}
+    )
     cmds = get_release_build_commands("oct26a", missing_only=True, sets=sets, imager_version="oct26")
     assert cmds == []
     cmds = get_release_build_commands("oct26a", missing_only=False, sets=sets, imager_version="oct26")
@@ -178,3 +183,161 @@ def test_print_missing_piic_only(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "# With piic" in out
     assert "# Without piic" not in out
+
+
+def _fake_tgz(topdir):
+    import gzip
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(topdir)
+        info.type = tarfile.DIRTYPE
+        tar.addfile(info)
+    buf.seek(0)
+    return buf.read()
+
+
+class _FakeRawResponse:
+    def __init__(self, payload=None, exc=None):
+        from io import BytesIO
+
+        self._payload = BytesIO(payload) if payload else None
+        self._exc = exc
+
+    def __enter__(self):
+        if self._exc:
+            raise self._exc
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        pass
+
+    @property
+    def raw(self):
+        return self._payload
+
+
+def test_resolve_imager_alias_failure_returns_alias(monkeypatch):
+    import gildas_release as gr
+
+    monkeypatch.setattr(gr.requests, "get", lambda *a, **k: _FakeRawResponse(exc=OSError("down")))
+    assert gr._resolve_imager_alias.__wrapped__("last") == "last"
+
+
+def test_resolve_imager_alias_reads_top_dir(monkeypatch):
+    import gildas_release as gr
+
+    payload = _fake_tgz("imager-src-oct26/")
+    monkeypatch.setattr(gr.requests, "get", lambda *a, **k: _FakeRawResponse(payload))
+    assert gr._resolve_imager_alias.__wrapped__("last") == "oct26"
+
+
+def test_imager_stale_matrix(monkeypatch):
+    import gildas_release as gr
+
+    cases = [
+        (None, "oct26", False),  # unreadable labels: never rebuild on network errors
+        ({}, "oct26", True),  # pre-label image: rebuild once
+        ({"abeelen.gildas.imager-version": "oct26"}, "oct26", False),
+        ({"abeelen.gildas.imager-version": "oct26"}, "nov26", True),
+        ({"abeelen.gildas.imager-version": "last"}, "nov26", False),
+        ({"abeelen.gildas.imager-version": "oct26"}, "last", False),
+    ]
+    for labels, expected, stale in cases:
+        monkeypatch.setattr(gr, "_image_labels", lambda tag: labels)
+        assert gr._imager_stale("oct26a", expected) is stale
+
+
+def test_stale_imager_rebuilds_present_tag(monkeypatch):
+    import gildas_release as gr
+
+    sets = make_sets(tags=["oct26a"])
+    monkeypatch.setattr(
+        gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "oct26"}
+    )
+    cmds = get_release_build_commands(
+        "oct26a", missing_only=True, sets=sets, imager_version="nov26"
+    )
+    assert len(cmds) == 1 and cmds[0].stale_imager
+    assert "IMAGER outdated" in gr._format_comment(cmds[0])
+    # Matching labels: still skipped when missing_only.
+    monkeypatch.setattr(
+        gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "nov26"}
+    )
+    cmds = get_release_build_commands(
+        "oct26a", missing_only=True, sets=sets, imager_version="nov26"
+    )
+    assert cmds == []
+
+
+def test_stale_check_only_for_main_releases(monkeypatch):
+    import gildas_release as gr
+
+    # Archived release with mocked labels: existence alone decides.
+    sets = make_sets(
+        tags=["mar26a", "mar26a-piic"],
+        archived_gildas=["mar26a"],
+        archived_piic=["mar26a"],
+    )
+    monkeypatch.setattr(gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "old"})
+    cmds = get_release_build_commands(
+        "mar26a", missing_only=True, sets=sets, include_archive=True, imager_version="new"
+    )
+    assert cmds == []
+
+
+def test_run_logged_to_file(tmp_path, capsys):
+    from gildas_release import _run_logged
+
+    log = tmp_path / "sub" / "x.log"
+    _run_logged("echo hello && echo world", str(log), tail=1)
+    assert log.read_text().splitlines() == ["hello", "world"]
+    out = capsys.readouterr().out
+    assert "# log:" in out and out.rstrip().endswith("world")
+
+
+def test_run_logged_failure_prints_tail_and_raises(tmp_path, capsys):
+    import subprocess
+
+    from gildas_release import _run_logged
+
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_logged("echo oops && exit 3", str(tmp_path / "f.log"), tail=5)
+    out = capsys.readouterr().out
+    assert "oops" in out
+
+
+def test_run_logged_passthrough(capfd):
+    from gildas_release import _run_logged
+
+    _run_logged("echo direct")
+    assert "direct" in capfd.readouterr().out
+
+
+def test_natif_tag():
+    from gildas_release import NatifCommand, _natif_tag
+
+    assert _natif_tag(NatifCommand("r", True, "c", True, "i")) == "r-natif-alpine"
+    assert _natif_tag(NatifCommand("r", True, "c", False, "i")) == "r-natif"
+
+
+def test_execute_log_paths(monkeypatch, tmp_path):
+    import gildas_release as gr
+
+    seen = []
+    monkeypatch.setattr(gr, "_run_logged", lambda cmd, log=None: seen.append((cmd, log)))
+    cmds = get_release_build_commands(
+        "jul26a", sets=make_sets(), archive_gildas=True, imager_version="jul26"
+    )
+    gr._print_command_sections(cmds, False, True, False, str(tmp_path))
+    logs = sorted(log for _, log in seen)
+    assert logs == [str(tmp_path / "jul26a-piic.log"), str(tmp_path / "jul26a.log")]
+    # Without log_dir: plain execution, log None.
+    seen.clear()
+    gr._print_command_sections(cmds, False, True, False, None)
+    assert seen and all(log is None for _, log in seen)
