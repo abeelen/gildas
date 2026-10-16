@@ -71,9 +71,11 @@ build:
 
 sif:
   # Convert Hub tags to SIFs into the generic package registry
-  # (gildas-sif / <tag> / gildas-<tag>.sif). Needs no Docker and no extra
-  # variables (CI_JOB_TOKEN authenticates); native .def builds stay on
-  # GitHub, where runners have root. Manual runs take SIF_TAGS
+  # (gildas-sif / <tag> / gildas-<tag>.sif). Needs no Docker. Auth is
+  # CI_JOB_TOKEN by default, or a project access token via GITLAB_PKG_TOKEN
+  # (Settings > Access tokens, Developer role, `api` scope) when the
+  # instance restricts job-token package uploads. Native .def builds stay
+  # on GitHub, where runners have root. Manual runs take SIF_TAGS
   # (default: latest + latest-piic); schedules rebuild only tags pushed
   # after the published package (fail-open).
   stage: publish
@@ -90,12 +92,17 @@ sif:
     - singularity version
   script:
     - |
+      if [ -n "${GITLAB_PKG_TOKEN:-}" ]; then
+        AUTH="PRIVATE-TOKEN: $GITLAB_PKG_TOKEN"
+      else
+        AUTH="JOB-TOKEN: $CI_JOB_TOKEN"
+      fi
       TAGS="${SIF_TAGS:-latest latest-piic}"
       for tag in $TAGS; do
         sif="gildas-$tag.sif"
         if [ "$CI_PIPELINE_SOURCE" = "schedule" ]; then
           pushed=$(curl -s "https://hub.docker.com/v2/repositories/abeelen/gildas/tags/$tag" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_last_pushed',''))" 2>/dev/null || true)
-          created=$(TAG="$tag" curl -s --header "JOB-TOKEN: $CI_JOB_TOKEN" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?package_name=gildas-sif" | TAG="$tag" python3 -c "import json,os,sys; print(next((p['created_at'] for p in json.load(sys.stdin) if p.get('version') == os.environ['TAG']), ''))" 2>/dev/null || true)
+          created=$(TAG="$tag" curl -s --header "$AUTH" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?package_name=gildas-sif" | TAG="$tag" python3 -c "import json,os,sys; print(next((p['created_at'] for p in json.load(sys.stdin) if p.get('version') == os.environ['TAG']), ''))" 2>/dev/null || true)
           if [ -n "$pushed" ] && [ -n "$created" ] && [ "$created" \> "$pushed" ]; then
             echo "$tag unchanged since $created, skipping."
             continue
@@ -103,10 +110,16 @@ sif:
         fi
         rm -f "$sif"
         if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
-          curl -s --header "JOB-TOKEN: $CI_JOB_TOKEN" --request DELETE "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif" >/dev/null || true
-          curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$sif" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif"
+          curl -s --header "$AUTH" --request DELETE "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif" >/dev/null || true
+          echo "Uploading $sif ..."
+          code=$(curl -s -o /tmp/upload-body.txt -w "%{http_code}" --header "$AUTH" --upload-file "$sif" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif" || true)
+          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
+            echo "Upload failed with HTTP $code, server answered:"
+            cat /tmp/upload-body.txt
+            exit 22
+          fi
         else
           echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
         fi
-        rm -f "$sif"
+        rm -f "$sif" /tmp/upload-body.txt
       done
