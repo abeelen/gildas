@@ -11,8 +11,9 @@
 # default, Alpine unless `debian` is set; `release` pins one explicitly).
 # Native assets accumulate per release name on the same rolling release.
 #
-# Uses eWaterCycle/setup-singularity with its default version; pin
-# `singularity-version` explicitly if a runner image ever breaks it.
+# Uses the distribution singularity-container package (4.x on Ubuntu
+# 24.04), installed with plain apt-get in both jobs — no third-party
+# actions, no version pinning to maintain.
 
 name: publish-sifs
 
@@ -49,7 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - uses: eWaterCycle/setup-singularity@v2
+      - name: Install Singularity
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq singularity-container squashfs-tools
       - name: Build SIFs and upload to the rolling release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,7 +86,8 @@ jobs:
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
-      - uses: eWaterCycle/setup-singularity@v2
+      - name: Install Singularity
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq singularity-container squashfs-tools
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

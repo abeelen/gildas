@@ -82,20 +82,8 @@ sif:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
   before_script:
-    - apt-get update -qq && apt-get install -y -qq wget python3 squashfs-tools ca-certificates
-    - |
-      DEB_URL=$(python3 -c "
-      import json, urllib.request
-      req = urllib.request.Request('https://api.github.com/repos/sylabs/singularity/releases/latest', headers={'Accept': 'application/vnd.github+json'})
-      rel = json.load(urllib.request.urlopen(req))
-      debs = [a for a in rel['assets'] if a['name'].startswith('singularity-ce_') and a['name'].endswith('_amd64.deb')]
-      noble = [a['browser_download_url'] for a in debs if 'noble' in a['name']]
-      other = [a['browser_download_url'] for a in debs if 'noble' not in a['name']]
-      print((noble + other)[0])
-      ")
-      wget -q -O /tmp/singularity.deb "$DEB_URL"
-      dpkg -i /tmp/singularity.deb || apt-get install -y -qq -f
-      singularity version
+    - apt-get update -qq && apt-get install -y -qq singularity-container squashfs-tools python3 ca-certificates
+    - singularity version
   script:
     - |
       TAGS="${SIF_TAGS:-latest latest-piic}"
