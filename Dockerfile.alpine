@@ -62,7 +62,8 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     groff \
     build-base \
     linux-headers \
-    ccache
+    ccache \
+    patch
 
 ENV PATH="/usr/lib/ccache/bin:${PATH}" \
     CC="ccache gcc" \
@@ -71,6 +72,10 @@ ENV PATH="/usr/lib/ccache/bin:${PATH}" \
 
 
 FROM gildas_builder AS builder
+
+# Source patches shared by all recipes (kept as files, applied with
+# patch(1) so they stay reviewable diffs instead of inline edits).
+COPY patches/ /tmp/patches/
 
 ARG release
 ENV release=${release}
@@ -96,35 +101,15 @@ RUN set -eu -o pipefail; \
     tar xJf "/tmp/gildas-src-$release.tar.xz"; \
     rm -f "/tmp/gildas-src-$release.tar.xz"
 
-# 2. Source patches (musl compatibility + clic ungate), isolated in their
-# own layer so a patch change does not force a re-download. Each sed is
-# guarded: fails loudly if the expected pattern disappears in a new
-# release instead of silently doing nothing.
+# 2. Source patches (musl compatibility, clic ungate, SIC foreground),
+# isolated in their own layer so a patch change does not force a
+# re-download. One loop serves both the GILDAS and IMAGER trees: they
+# share the same layout. patch(1) fails loudly on mismatch.
 RUN set -eu -o pipefail; \
     cd "gildas-src-$release"; \
-    grep -q 'sysconf (_SC_LEVEL1_DCACHE_SIZE)' kernel/lib/gsys/sysc.c && \
-      sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
-      echo "WARN: LEVEL1_DCACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL2_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
-      sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
-      echo "WARN: LEVEL2_CACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL3_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
-      sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
-      echo "WARN: LEVEL3_CACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL4_CACHE_SIZE)' kernel/lib/gsys/sysc.c && \
-      sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' kernel/lib/gsys/sysc.c || \
-      echo "WARN: LEVEL4_CACHE pattern not found, skipping" >&2; \
-    grep -q '<sys/unistd.h>' kernel/lib/gtv/xsub.c && \
-      sed -i 's|<sys/unistd.h>|<unistd.h>|' kernel/lib/gtv/xsub.c || \
-      echo "WARN: xsub.c unistd pattern not found, skipping" >&2; \
-    grep -q '__sighandler_t sic_sighandler_t' kernel/lib/gcore/gcomm.h && \
-      sed -i 's/__sighandler_t sic_sighandler_t/void (* sic_sighandler_t)(int)/' kernel/lib/gcore/gcomm.h || \
-      echo "WARN: gcomm.h sighandler pattern not found, skipping" >&2; \
-    CLIC_MK="packages/clic/Makefile"; \
-    if grep -q 'GAG_USE_SANITIZE' "$CLIC_MK" 2>/dev/null; then \
-      sed -i -e '/^ifeq ($(GAG_COMPILER_FKIND),gfortran)$/d' -e '/^  ifneq ($(GAG_USE_SANITIZE),yes)$/d' -e '/^    subdirs =$/d' -e '/^  endif$/d' -e '/^endif$/d' "$CLIC_MK"; \
-      grep -q '^subdirs = lib main' "$CLIC_MK" && ! grep -q 'GAG_USE_SANITIZE' "$CLIC_MK" || { echo "ERROR: clic ungate patch failed" >&2; exit 1; }; \
-    fi
+    for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do \
+      patch -p1 --forward < "/tmp/patches/${_p}.patch" || { echo "ERROR: patch ${_p} failed" >&2; exit 1; }; \
+    done
 
 # 3. Compile layer with ccache.
 RUN --mount=type=cache,target=/root/.ccache \
@@ -155,25 +140,9 @@ RUN set -eu -o pipefail; \
     case "${IMDIR}" in imager-src-*) ;; *) echo "ERROR: unexpected imager top dir ${IMDIR}" >&2; exit 1;; esac; \
     echo "${IMDIR#imager-src-}" > /etc/imager-version; \
     tar xzf imager-dl.tgz -C /; rm -f imager-dl.tgz; \
-    IMROOT="/${IMDIR}"; \
-    grep -q 'sysconf (_SC_LEVEL1_DCACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
-      sed -i 's/sysconf (_SC_LEVEL1_DCACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
-      echo "WARN: imager LEVEL1_DCACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL2_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
-      sed -i 's/sysconf (_SC_LEVEL2_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
-      echo "WARN: imager LEVEL2_CACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL3_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
-      sed -i 's/sysconf (_SC_LEVEL3_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
-      echo "WARN: imager LEVEL3_CACHE pattern not found, skipping" >&2; \
-    grep -q 'sysconf (_SC_LEVEL4_CACHE_SIZE)' "$IMROOT/kernel/lib/gsys/sysc.c" && \
-      sed -i 's/sysconf (_SC_LEVEL4_CACHE_SIZE)/0/' "$IMROOT/kernel/lib/gsys/sysc.c" || \
-      echo "WARN: imager LEVEL4_CACHE pattern not found, skipping" >&2; \
-    grep -q '<sys/unistd.h>' "$IMROOT/kernel/lib/gtv/xsub.c" && \
-      sed -i 's|<sys/unistd.h>|<unistd.h>|' "$IMROOT/kernel/lib/gtv/xsub.c" || \
-      echo "WARN: imager xsub.c unistd pattern not found, skipping" >&2; \
-    grep -q '__sighandler_t sic_sighandler_t' "$IMROOT/kernel/lib/gcore/gcomm.h" && \
-      sed -i 's/__sighandler_t sic_sighandler_t/void (* sic_sighandler_t)(int)/' "$IMROOT/kernel/lib/gcore/gcomm.h" || \
-      echo "WARN: imager gcomm.h sighandler pattern not found, skipping" >&2; \
+    for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do \
+      (cd "/${IMDIR}" && patch -p1 --forward < "/tmp/patches/${_p}.patch") || { echo "ERROR: patch ${_p} failed (IMAGER tree)" >&2; exit 1; }; \
+    done; \
     IMDIR="${IMDIR}" JOBS="${MAKE_JOBS:-$(nproc)}" bash -c ' \
       set -ex -o pipefail; \
       unset gagsrcdir gagexedir gagadmdir || true; \

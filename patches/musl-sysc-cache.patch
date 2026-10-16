@@ -1,0 +1,18 @@
+--- a/kernel/lib/gsys/sysc.c
++++ b/kernel/lib/gsys/sysc.c
+@@ -1791,10 +1791,12 @@
+     *l3size = (int64_t) (csize / 1024);
+     *l4size = 0;  /* Not available */
+ #else
+-    *l1size = sysconf (_SC_LEVEL1_DCACHE_SIZE) / 1024;  /* L1 data cache size*/
+-    *l2size = sysconf (_SC_LEVEL2_CACHE_SIZE) / 1024;
+-    *l3size = sysconf (_SC_LEVEL3_CACHE_SIZE) / 1024;
+-    *l4size = sysconf (_SC_LEVEL4_CACHE_SIZE) / 1024;
++    /* musl libc lacks the glibc-specific _SC_LEVELn_CACHE_SIZE sysconf keys.
++       These sizes are informational only: report 0. */
++    *l1size = 0;  /* L1 data cache size*/
++    *l2size = 0;
++    *l3size = 0;
++    *l4size = 0;
+ #endif
+ }+

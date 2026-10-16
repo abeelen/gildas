@@ -294,19 +294,17 @@ a wrapper is only created when it does not shadow a GILDAS program.)
         terminal session, which needs no display at all.
 - **Frozen session under Singularity (prompt shows, typing dead,
   Ctrl-C dead)**  \
-        `singularity run <img> <prog>` can leave the payload outside the
-        terminal's foreground group (or without a controlling terminal),
-        so its first terminal read suspends it — `ps` shows `Tl` /
-        `do_signal_stop`, and only killing the terminal helps. Verified
-        working instead: interact through a shell first (its job control
-        sets the terminal up correctly — full readline interaction,
-        tested), or batch mode, which never touches the terminal:
+        Fixed in current images (GILDAS `setpgrp()` at startup moved the
+        process out of the terminal foreground group; new builds restore
+        it — see `patches/sic-foreground.patch`). On older images,
+        interact through a shell first, or batch mode:
         ```bash
         singularity exec docker://abeelen/gildas:latest bash
         # then inside: mapping -nw
         echo 'say "hi"' | singularity run docker://abeelen/gildas:latest mapping -nw
         ```
-        Bare `docker run -it` always works (fresh pty, correct setup).
+        Bare `docker run -it` always works. Technical background in
+        [docs/notes.md](docs/notes.md).
 
 ## Further documentation
 

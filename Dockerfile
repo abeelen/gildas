@@ -66,6 +66,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     groff-base \
     python3-setuptools \
     python-dev-is-python3 \
+    patch \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/usr/lib/ccache:${PATH}" \
@@ -75,6 +76,10 @@ ENV PATH="/usr/lib/ccache:${PATH}" \
 
 
 FROM gildas_builder AS builder
+
+# Source patches shared by all recipes (kept as files, applied with
+# patch(1) so they stay reviewable diffs instead of inline edits).
+COPY patches/ /tmp/patches/
 
 ARG release
 ENV release=${release}
@@ -99,6 +104,12 @@ RUN set -eux -o pipefail; \
       "$GILDAS_URL/gildas-doc-$release.tar.xz" -o "/tmp/gildas-doc-$release.tar.xz" || true; \
     tar xJf "/tmp/gildas-src-$release.tar.xz"; \
     rm -f "/tmp/gildas-src-$release.tar.xz"
+
+# 1b. SIC foreground patch (own layer, like the Alpine patches): keeps
+# interactive sessions in the terminal foreground group (see the patch
+# file). patch(1) fails loudly on mismatch.
+RUN set -eux -o pipefail; \
+    cd "gildas-src-$release" && patch -p1 --forward < /tmp/patches/sic-foreground.patch
 
 # 2. Compile layer: uses ccache + apt cache mounts for speed.
 # NOTE: the GILDAS env script requires bash (`source`), so the
@@ -141,6 +152,7 @@ RUN set -eux -o pipefail; \
     case "${IMDIR}" in imager-src-*) ;; *) echo "ERROR: unexpected imager top dir ${IMDIR}" >&2; exit 1;; esac; \
     echo "${IMDIR#imager-src-}" > /etc/imager-version; \
     tar xzf imager-dl.tgz -C /; rm -f imager-dl.tgz; \
+    (cd "/${IMDIR}" && patch -p1 --forward < /tmp/patches/sic-foreground.patch) || { echo "ERROR: SIC foreground patch failed" >&2; exit 1; }; \
     IMDIR="${IMDIR}" JOBS="${MAKE_JOBS:-$(nproc)}" SEARCH="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH):/usr/lib/x86_64-linux-gnu" bash -c ' \
       set -ex -o pipefail; \
       unset gagsrcdir gagexedir gagadmdir || true; \

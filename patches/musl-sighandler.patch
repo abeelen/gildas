@@ -1,0 +1,12 @@
+--- a/kernel/lib/gcore/gcomm.h
++++ b/kernel/lib/gcore/gcomm.h
+@@ -36,7 +36,8 @@
+ #elif defined(darwin) || defined(WIN32)
+ typedef void (* sic_sighandler_t)(int);
+ #else
+-typedef __sighandler_t sic_sighandler_t;
++/* musl libc has no glibc __sighandler_t: spell the function pointer directly. */
++typedef void (* sic_sighandler_t)(int);
+ #endif
+ 
+ /** platform independant definition of task */

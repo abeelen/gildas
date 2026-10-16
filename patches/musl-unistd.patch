@@ -1,0 +1,12 @@
+--- a/kernel/lib/gtv/xsub.c
++++ b/kernel/lib/gtv/xsub.c
+@@ -9,7 +9,8 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #ifndef WIN32
+-#include <sys/unistd.h>
++/* musl libc has no <sys/unistd.h>; <unistd.h> is the standard header. */
++#include <unistd.h>
+ #endif
+ 
+ #define open_x CFC_EXPORT_NAME( open_x)

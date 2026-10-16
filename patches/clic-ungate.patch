@@ -1,0 +1,16 @@
+--- a/packages/clic/Makefile
++++ b/packages/clic/Makefile
+@@ -11,11 +11,8 @@
+ ###########################################################################
+ 
+ subdirs = lib main etc doc demo pro
+-ifeq ($(GAG_COMPILER_FKIND),gfortran)
+-  ifneq ($(GAG_USE_SANITIZE),yes)
+-    subdirs =
+-  endif
+-endif
++# clic is always built: the GAG_USE_SANITIZE gate above empties subdirs with
++# gfortran, and sanitizers stay disabled (they crash at runtime).
+ 
+ ###########################################################################
+ 

@@ -1,9 +1,9 @@
 Bootstrap: docker
-From: debian:stable-slim
+From: alpine:latest
 
 %labels
     Author abeelen
-    Description "Native Singularity image building GILDAS from official tarballs"
+    Description "Native Alpine Singularity image building GILDAS from official tarballs (musl patches included)"
 
 %environment
     # Default runtime environment (can be overridden at build time via env vars)
@@ -12,88 +12,70 @@ From: debian:stable-slim
     export PIIC_URL=${PIIC_URL:-https://www.iram.fr/~gildas/dist}
     export GAG_USE_SANITIZE=${GAG_USE_SANITIZE:-no}
     export MAKE_JOBS=${MAKE_JOBS:-$(nproc)}
-    export WITH_TEXLIVE=${WITH_TEXLIVE:-0}
     export IMAGER_VERSION=${IMAGER_VERSION:-last}
     export IMAGER_URL=${IMAGER_URL:-https://share.oasu.u-bordeaux.fr/imager}
     export WITH_IMAGER=${WITH_IMAGER:-1}
     export SINGULARITY_SHELL=/bin/bash
 
+# Source patches shared by all recipes (kept as files, applied with
+# patch(1) so they stay reviewable diffs instead of inline edits).
+# %setup runs on the host (repo root), so plain relative paths work;
+# %files is avoided: its staging proved unreliable (missing file at %post).
+%setup
+    mkdir -p ${SINGULARITY_ROOTFS}/opt/patches
+    cp patches/*.patch ${SINGULARITY_ROOTFS}/opt/patches/
+
 %post
-    # NOTE: %post runs under /bin/sh (dash on Debian): no pipefail, no
-    # `source` outside an explicit bash -c. Keep it POSIX.
     set -eu
 
-    export DEBIAN_FRONTEND=noninteractive
+    # Only cfitsio comes from edge/testing (same as Dockerfile.alpine).
+    echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
 
-    # Defaults for build-time environment variables. Note that the
-    # %environment section is only used at runtime, so we must set
-    # sensible defaults again here for the build stage. Also, the host
-    # environment does NOT propagate into %post: pass variables as
-    # SINGULARITYENV_* when building (plain VAR=... prefixes are
-    # silently dropped, then set -u aborts).
-    : "${GILDAS_RELEASE:=jan26a}"
+    # Slim runtime dependencies (mirrors the gildas_worker stage).
+    apk add --no-cache \
+        bash \
+        curl \
+        libx11 \
+        libpng \
+        fftw \
+        gtk+2.0 \
+        python3 \
+        ipython \
+        py3-pip \
+        py3-numpy \
+        py3-scipy \
+        py3-emcee \
+        py3-matplotlib \
+        cfitsio@testing \
+        libgomp \
+        gcompat
+
+    # No py3-astropy in Alpine repos: install via pip.
+    pip install --break-system-packages astropy
+
+    # Build dependencies
+    apk add --no-cache \
+        libx11-dev \
+        libpng-dev \
+        fftw-dev \
+        cfitsio-dev@testing \
+        python3-dev \
+        gtk+2.0-dev \
+        gfortran \
+        groff \
+        build-base \
+        linux-headers \
+        patch
+
+    # Build and install GILDAS
+    # Defaults for build-time variables: the host environment does NOT
+    # propagate into %post, so pass them as SINGULARITYENV_* when building
+    # (plain VAR=... prefixes are silently dropped, then set -u aborts).
+    : "${GILDAS_RELEASE:=oct26a}"
     : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
     : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"
     : "${GAG_USE_SANITIZE:=no}"
     : "${MAKE_JOBS:=$(nproc)}"
-    : "${WITH_TEXLIVE:=0}"
-    : "${IMAGER_VERSION:=last}"
-    : "${IMAGER_URL:=https://share.oasu.u-bordeaux.fr/imager}"
-    : "${WITH_IMAGER:=1}"
-
-    # Slim runtime dependencies (texlive only when WITH_TEXLIVE=1, for the
-    # pipeline; mirrors the gildas_worker stage of Dockerfile).
-    apt-get -y update && apt-get install -y --no-install-recommends \
-        bash \
-        ca-certificates \
-        libx11-6 \
-        libpng16-16 \
-        libfftw3-double3 \
-        libfftw3-single3 \
-        libcfitsio10 \
-        libforms2 \
-        libasan8 \
-        libubsan1 \
-        python3 \
-        libpython3.13 \
-        python-is-python3 \
-        python3-numpy \
-        python3-scipy \
-        python3-emcee \
-        python3-matplotlib \
-        python3-astropy \
-        ipython3 \
-        python3-ipython \
-        libgtk2.0 \
-        && if [ "${WITH_TEXLIVE}" = "1" ]; then apt-get install -y --no-install-recommends texlive ghostscript; fi \
-        && apt-get clean \
-        && rm -rf /var/lib/apt/lists/*
-
-    # Build dependencies
-    apt-get -y update && apt-get install -y --no-install-recommends \
-        curl \
-        xz-utils \
-        make \
-        gcc \
-        g++ \
-        gfortran \
-        pkg-config \
-        dpkg-dev \
-        libx11-dev \
-        libpng-dev \
-        libfftw3-dev \
-        libcfitsio-dev \
-        libforms-dev \
-        libssl-dev \
-        python3-dev \
-        libgtk2.0-dev \
-        groff-base \
-        python3-setuptools \
-        python-dev-is-python3 \
-        && apt-get clean \
-        && rm -rf /var/lib/apt/lists/*
-
-    # Build and install GILDAS
     release="${GILDAS_RELEASE}"
     gildas_url="${GILDAS_URL}"
     piic_url="${PIIC_URL}"
@@ -108,18 +90,17 @@ From: debian:stable-slim
     tar xJf "/tmp/gildas-src-${release}.tar.xz"
     rm -f "/tmp/gildas-src-${release}.tar.xz"
 
-    # clic is the only package gated on GAG_USE_SANITIZE=yes with gfortran
-    # (packages/clic/Makefile empties its subdirs otherwise), which we keep
-    # disabled as it causes crashes: ungate it so clic is built normally.
-    clic_mk="gildas-src-${release}/packages/clic/Makefile"
-    if grep -q 'GAG_USE_SANITIZE' "${clic_mk}" 2>/dev/null; then
-        sed -i -e '/^ifeq ($(GAG_COMPILER_FKIND),gfortran)$/d' -e '/^  ifneq ($(GAG_USE_SANITIZE),yes)$/d' -e '/^    subdirs =$/d' -e '/^  endif$/d' -e '/^endif$/d' "${clic_mk}"
-        grep -q '^subdirs = lib main' "${clic_mk}" && ! grep -q 'GAG_USE_SANITIZE' "${clic_mk}" || { echo "ERROR: clic ungate patch failed" >&2; exit 1; }
-    fi
+    # Source patches (same files as the Docker images, staged via %setup
+    # above). One loop serves both the GILDAS and IMAGER trees: they share
+    # the same layout. patch(1) fails loudly on mismatch.
+    for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do
+        (cd "gildas-src-${release}" && patch -p1 --forward < "/opt/patches/${_p}.patch") \
+            || { echo "ERROR: patch ${_p} failed (GILDAS tree)" >&2; exit 1; }
+    done
+    cd /
 
-    multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
     bash -c "cd gildas-src-${release} && \
-        GAG_SEARCH_PATH=/usr/lib/${multiarch}:/usr/lib/x86_64-linux-gnu source admin/gildas-env.sh -o openmp && \
+        GAG_SEARCH_PATH=/usr/lib source admin/gildas-env.sh -o openmp && \
         make -j ${MAKE_JOBS} && make install"
 
     rm -rf "gildas-src-${release}"
@@ -132,8 +113,10 @@ From: debian:stable-slim
     # Standalone IMAGER (https://imager.oasu.u-bordeaux.fr, self-contained
     # tree built like GILDAS) at canonical /imager-exe. Skipped when
     # WITH_IMAGER=0.
+    : "${IMAGER_VERSION:=last}"
+    : "${IMAGER_URL:=https://share.oasu.u-bordeaux.fr/imager}"
+    : "${WITH_IMAGER:=1}"
     mkdir -p /imager-exe
-    echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version
     if [ "${WITH_IMAGER}" = "1" ]; then
         unset gagsrcdir gagexedir gagadmdir || true
         cd /tmp
@@ -144,18 +127,26 @@ From: debian:stable-slim
         echo "${imdir#imager-src-}" > /etc/imager-version
         tar xzf imager-dl.tgz -C /
         rm -f imager-dl.tgz
-        IMDIR="${imdir}" JOBS="${MAKE_JOBS}" SEARCH="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH):/usr/lib/x86_64-linux-gnu" bash -c '
+        # Same patches as the GILDAS tree (same loop, IMAGER tree mirrors
+        # the layout; verified against oct26).
+        imroot="/${imdir}"
+        for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do
+            (cd "${imroot}" && patch -p1 --forward < "/opt/patches/${_p}.patch") \
+                || { echo "ERROR: patch ${_p} failed (IMAGER tree)" >&2; exit 1; }
+        done
+        IMDIR="${imdir}" JOBS="${MAKE_JOBS}" bash -c '
             set -ex
             unset gagsrcdir gagexedir gagadmdir || true
             cd "/${IMDIR}"
             cd Admin-Source && source substitute.compile.sh && cd ..
-            GAG_SEARCH_PATH="${SEARCH}" source admin/imager-env.sh -o openmp
+            GAG_SEARCH_PATH=/usr/lib source admin/imager-env.sh -o openmp
             export gagexedir=/imager-exe
             make -j "${JOBS}" && make install
         '
         rm -rf "/${imdir}"
     else
         echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"
+        echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version
     fi
 
     # Optional PIIC installation (warns when the tarball is missing instead
@@ -170,10 +161,9 @@ From: debian:stable-slim
         echo "none (unresolved)" > /etc/piic-version
     fi
 
-    # Auto-detect GAG_EXEC_SYSTEM instead of hardcoding
-    # x86_64-<distro>-gfortran-openmp (breaks on testing/unstable).
-    gag_exec_system="$(ls -1 "/gildas-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
-    if [ -z "${gag_exec_system}" ]; then gag_exec_system='x86_64-debian-gfortran-openmp'; fi
+    # Auto-detect GAG_EXEC_SYSTEM (musl layout differs from glibc).
+    gag_exec_system="$(ls -1 "/gildas-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
+    if [ -z "${gag_exec_system}" ]; then gag_exec_system='x86_64-generic'; fi
 
     # Single environment file, shared by the runscript and appruns
     # (same layout as /etc/gildas-env.sh in the Docker images).
@@ -191,7 +181,7 @@ From: debian:stable-slim
     # gets a self-contained /usr/local/bin wrapper selecting the PIIC tree.
     # Never shadows a GILDAS program of the same name.
     if [ -f "/piic-exe-${release}/etc/bash_profile" ]; then
-        piic_exec="$(ls -1 "/piic-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
+        piic_exec="$(ls -1 "/piic-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
         if [ -z "${piic_exec}" ]; then piic_exec='x86_64-generic'; fi
         for _bin in "/piic-exe-${release}/${piic_exec}/bin/"*; do
             _prog="$(basename "${_bin}")"
@@ -213,8 +203,8 @@ From: debian:stable-slim
 
     # Same for the standalone IMAGER tree at canonical /imager-exe.
     if [ -f /imager-exe/etc/bash_profile ]; then
-        im_exec="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"
-        if [ -z "${im_exec}" ]; then im_exec='x86_64-debian-gfortran-openmp'; fi
+        im_exec="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
+        if [ -z "${im_exec}" ]; then im_exec='x86_64-generic'; fi
         echo "${im_exec}" > /etc/imager-exec-system
         for _bin in "/imager-exe/${im_exec}/bin/"*; do
             _prog="$(basename "${_bin}")"
@@ -237,37 +227,24 @@ From: debian:stable-slim
     # Keep interactive shells working too
     cat /etc/gildas-env.sh >> /etc/bash.bashrc
 
-    # ------------------------------------------------------------------
-    # Trim build-time dependencies and caches to reduce final SIF size
-    # (emulates a "builder" + "worker" split in a single definition).
-    # ------------------------------------------------------------------
-    apt-get purge -y \
-        curl \
-        xz-utils \
-        make \
-        gcc \
-        g++ \
-        gfortran \
-        pkg-config \
-        dpkg-dev \
+    # Trim build-time dependencies to reduce final SIF size.
+    apk del \
         libx11-dev \
         libpng-dev \
-        libfftw3-dev \
-        libcfitsio-dev \
-        libforms-dev \
-        libssl-dev \
+        fftw-dev \
+        cfitsio-dev \
         python3-dev \
-        libgtk2.0-dev \
-        groff-base \
-        python3-setuptools \
-        python-dev-is-python3 || true
+        gtk+2.0-dev \
+        gfortran \
+        groff \
+        build-base \
+        linux-headers || true
 
-    apt-get autoremove -y || true
-    apt-get clean
     # NOTE: never glob /tmp or /var/tmp here: under `singularity build`
     # those hold the builder's own busy mounts (resolv.conf, proc, sys
-    # ...) and rm aborts on them.
-    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info
+    # ...) and rm aborts on them. /tmp only ever holds our own downloads,
+    # all removed right after use above.
+    rm -rf /usr/share/doc /usr/share/man /root/.cache
 
 %runscript
     # Source the GILDAS environment (same file as in the Docker images).

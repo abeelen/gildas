@@ -1,0 +1,27 @@
+--- a/kernel/lib/sic/getcar.c
++++ b/kernel/lib/sic/getcar.c
+@@ -4,7 +4,9 @@
+ 
+ #include <stdio.h>
++#include <signal.h>
+ #ifndef WIN32
+ #include <unistd.h>
++#include <termios.h>
+ #endif
+ 
+ /* When the main task must be mono-user the command memory
+@@ -21,6 +22,14 @@
+ #else
+     setpgid( 0, 0);                     /* This should also work on Linux */
+ #endif
++    /* Stay in the terminal foreground group when interactive: setpgrp() above moves us out of it, and the first terminal read would then suspend the process (SIGTTIN). Restoring our own group is a no-op when already foreground and fails silently without a terminal. */
++    if (isatty(STDIN_FILENO)) {
++        /* tcsetpgrp() issued from a background group raises SIGTTOU and stops
++           us before doing anything: ignore it around the call (restored after). */
++        void (*saved_ttou)(int) = signal(SIGTTOU, SIG_IGN);
++        tcsetpgrp(STDIN_FILENO, getpgrp());
++        signal(SIGTTOU, saved_ttou);
++    }
+ #endif
+ 
+     /* set error handlers */

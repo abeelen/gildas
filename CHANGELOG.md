@@ -18,7 +18,11 @@
 - CI: GitHub Actions + GitLab pipeline (scheduled, manual, print-only
   plans), SIF publishing to a rolling release plus GitLab artifacts
   mirror; native SIF builds require `SINGULARITYENV_*`, no `/tmp` globs
-  in def cleanup
+  in def cleanup (builder's own busy mounts)
+- SIC foreground patch (`patches/sic-foreground.patch`, all recipes):
+  GILDAS `setpgrp()` at startup moved interactive sessions out of the
+  terminal foreground group (fatal SIGTTIN freeze); foreground restored
+  when stdin is a tty, `kill(0)` cleanup semantics untouched
 ### Fixed
 - `clic` ungated from the upstream `GAG_USE_SANITIZE` build gate;
   `gildas-natif.def` parity with `Dockerfile`; `latest`/`latest-piic`
