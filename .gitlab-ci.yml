@@ -84,7 +84,9 @@ sif:
   # Convert Hub tags to SIFs and push them to the project container
   # registry ($CI_REGISTRY_IMAGE/sif:<tag>), pullable with
   # `singularity pull oras://<registry>/<project>/sif:<tag>`.
-  # Pushed with `singularity push` (not oras: plain `oras push` stamps
+  # Built through gildas-latest.def (not bare docker:// conversions) so
+  # the SIFs carry runscript + %apprun entries. Pushed with
+  # `singularity push` (not oras: plain `oras push` stamps
   # artifactType vnd.unknown.artifact.v1, which this registry rejects),
   # authenticated with the same CI_REGISTRY_* job credentials as the
   # docker push. Native .def builds stay on GitHub, where runners have
@@ -112,7 +114,11 @@ sif:
       for tag in $TAGS; do
         sif="gildas-$tag.sif"
         rm -f "$sif"
-        if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
+        # Definition bootstrap (not a bare docker:// conversion) so the
+        # SIF carries runscript + %apprun entries (--fakeroot: builders
+        # run unprivileged).
+        sed "s|^From: .*|From: abeelen/gildas:$tag|" gildas-latest.def > /tmp/sif-build.def
+        if singularity build --fakeroot "$sif" /tmp/sif-build.def; then
           singularity push -U --authfile "$HOME/.docker/config.json" "$sif" oras://"$CI_REGISTRY_IMAGE/sif:$tag"
         else
           echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."

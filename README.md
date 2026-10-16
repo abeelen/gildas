@@ -461,8 +461,14 @@ singularity pull oras://registry.lam.fr/abeelen/gildas/sif:latest-piic
 ```
 
 (exact paths also browsable under Deploy > Container Registry).
-Manual runs take an optional `SIF_TAGS` variable, schedules refresh
-weekly. Native `.def` builds stay on GitHub, where runners have root.
+All distributed SIFs are built through `gildas-latest.def` (not bare
+`docker://` conversions), so `run` and `--app` work out of the box —
+note that SIFs converted manually from `docker://` lack `%apprun`
+entries, and that bare `singularity exec <sif> <prog>` gets no
+environment (use `run`/`--app`, or the self-contained wrappers like
+`imager`). Manual runs take an optional
+`SIF_TAGS` variable, schedules refresh weekly. Native `.def` builds stay
+on GitHub, where runners have root.
 
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):

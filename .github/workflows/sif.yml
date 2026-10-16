@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
+      - uses: actions/checkout@v5
       - name: Install Singularity
         run: sudo apt-get update -qq && sudo apt-get install -y -qq singularity-container squashfs-tools
       - name: Build SIFs and upload to the rolling release
@@ -74,7 +75,11 @@ jobs:
               fi
             fi
             rm -f "$sif"
-            if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
+            # Definition bootstrap (not a bare docker:// conversion) so the
+            # SIF carries runscript + %apprun entries (--fakeroot: builders
+            # run unprivileged).
+            sed "s|^From: .*|From: abeelen/gildas:$tag|" gildas-latest.def > /tmp/sif-build.def
+            if singularity build --fakeroot "$sif" /tmp/sif-build.def; then
               gh release upload sif-images "$sif" --clobber
             else
               echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
