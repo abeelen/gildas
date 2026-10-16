@@ -289,3 +289,55 @@ def test_stale_check_only_for_main_releases(monkeypatch):
         "mar26a", missing_only=True, sets=sets, include_archive=True, imager_version="new"
     )
     assert cmds == []
+
+
+def test_run_logged_to_file(tmp_path, capsys):
+    from gildas_release import _run_logged
+
+    log = tmp_path / "sub" / "x.log"
+    _run_logged("echo hello && echo world", str(log), tail=1)
+    assert log.read_text().splitlines() == ["hello", "world"]
+    out = capsys.readouterr().out
+    assert "# log:" in out and out.rstrip().endswith("world")
+
+
+def test_run_logged_failure_prints_tail_and_raises(tmp_path, capsys):
+    import subprocess
+
+    from gildas_release import _run_logged
+
+    with pytest.raises(subprocess.CalledProcessError):
+        _run_logged("echo oops && exit 3", str(tmp_path / "f.log"), tail=5)
+    out = capsys.readouterr().out
+    assert "oops" in out
+
+
+def test_run_logged_passthrough(capfd):
+    from gildas_release import _run_logged
+
+    _run_logged("echo direct")
+    assert "direct" in capfd.readouterr().out
+
+
+def test_natif_tag():
+    from gildas_release import NatifCommand, _natif_tag
+
+    assert _natif_tag(NatifCommand("r", True, "c", True, "i")) == "r-natif-alpine"
+    assert _natif_tag(NatifCommand("r", True, "c", False, "i")) == "r-natif"
+
+
+def test_execute_log_paths(monkeypatch, tmp_path):
+    import gildas_release as gr
+
+    seen = []
+    monkeypatch.setattr(gr, "_run_logged", lambda cmd, log=None: seen.append((cmd, log)))
+    cmds = get_release_build_commands(
+        "jul26a", sets=make_sets(), archive_gildas=True, imager_version="jul26"
+    )
+    gr._print_command_sections(cmds, False, True, False, str(tmp_path))
+    logs = sorted(log for _, log in seen)
+    assert logs == [str(tmp_path / "jul26a-piic.log"), str(tmp_path / "jul26a.log")]
+    # Without log_dir: plain execution, log None.
+    seen.clear()
+    gr._print_command_sections(cmds, False, True, False, None)
+    assert seen and all(log is None for _, log in seen)

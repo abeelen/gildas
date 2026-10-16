@@ -7,6 +7,7 @@ import subprocess
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Sequence
 
 import click
@@ -812,7 +813,7 @@ def get_natif_commands(
 def _format_natif_comment(cmd: NatifCommand) -> str:
     """Return a human-readable comment line for a native build command."""
 
-    tag = f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
+    tag = _natif_tag(cmd)
     extra = " (+piic bundled)" if cmd.has_piic else " (no piic upstream)"
     return f"# * {tag}{extra} [imager {cmd.imager_version}]"
 
@@ -842,8 +843,33 @@ def _render_command(cmd: BuildCommand, singularity: bool) -> str:
     return singularity_command(cmd) if singularity else cmd.command
 
 
+def _run_logged(command: str, log_path: str | None = None, tail: int = 15) -> None:
+    """Run a shell command, optionally teeing output to a log file.
+
+    With ``log_path``, full output goes to the file (created with parents)
+    and only the last ``tail`` lines are printed, keeping CI logs under
+    their size limits. Failures raise after printing the tail.
+    """
+    if log_path is None:
+        subprocess.run(command, shell=True, check=True)
+        return
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as handle:
+        proc = subprocess.run(command, shell=True, stdout=handle, stderr=subprocess.STDOUT)
+    print(f"# log: {path}")
+    for line in path.read_text(errors="replace").splitlines()[-tail:]:
+        print(line)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, command)
+
+
 def _print_command_sections(
-    commands: List[BuildCommand], singularity: bool, execute: bool, piic_only: bool
+    commands: List[BuildCommand],
+    singularity: bool,
+    execute: bool,
+    piic_only: bool,
+    log_dir: str | None = None,
 ) -> None:
     """Print Without/With-piic sections, skipping empty ones (honors --piic)."""
     sections = ((SECTION_WITHOUT_PIIC, "# Without piic"), (SECTION_WITH_PIIC, "# With piic"))
@@ -862,7 +888,8 @@ def _print_command_sections(
             rendered = _render_command(cmd, singularity)
             print(rendered)
             if execute:
-                subprocess.run(rendered, shell=True, check=True)
+                log = str(Path(log_dir) / f"{_image_tag(cmd)}.log") if log_dir else None
+                _run_logged(rendered, log)
 
 
 def _format_comment(cmd: BuildCommand) -> str:
@@ -887,6 +914,11 @@ def _format_comment(cmd: BuildCommand) -> str:
     return f"# * {cmd.release}"
 
 
+def _natif_tag(cmd: NatifCommand) -> str:
+    """SIF tag implied by a native build command (mirrors its comment)."""
+    return f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
+
+
 def print_natif_build_commands(
     dockerfile: str = "Dockerfile.alpine",
     execute: bool = False,
@@ -894,6 +926,7 @@ def print_natif_build_commands(
     imager_version: str | None = None,
     piic_only: bool = False,
     archive_gildas: bool = False,
+    log_dir: str | None = None,
 ) -> None:
     """Print (or execute) native `singularity build ... .def` commands."""
 
@@ -911,7 +944,8 @@ def print_natif_build_commands(
         print(_format_natif_comment(cmd))
         print(cmd.command)
         if execute:
-            subprocess.run(cmd.command, shell=True, check=True)
+            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
+            _run_logged(cmd.command, log)
 
 
 def print_missing_build_commands(
@@ -924,6 +958,7 @@ def print_missing_build_commands(
     imager_version: str | None = None,
     piic_only: bool = False,
     archive_gildas: bool = False,
+    log_dir: str | None = None,
 ) -> None:
     """Print (or execute) docker commands for missing releases.
 
@@ -949,6 +984,7 @@ def print_missing_build_commands(
             imager_version=imager_version,
             piic_only=piic_only,
             archive_gildas=archive_gildas,
+            log_dir=log_dir,
         )
         return
 
@@ -960,7 +996,7 @@ def print_missing_build_commands(
         imager_version=imager_version,
     )
 
-    _print_command_sections(commands, singularity, execute, piic_only)
+    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
 
 
 @click.command()
@@ -1025,6 +1061,12 @@ def print_missing_build_commands(
     is_flag=True,
     help="Run the generated docker build/push commands instead of only printing them.",
 )
+@click.option(
+    "--log-dir",
+    "log_dir",
+    default=None,
+    help="With --execute, tee each command's output to <dir>/<tag>.log and print only the tail (keeps CI logs under their size limits).",
+)
 def main(
     release_name: str | None = None,
     verbose: int = 0,
@@ -1032,6 +1074,7 @@ def main(
     debian: bool = False,
     piic_only: bool = False,
     execute: bool = False,
+    log_dir: str | None = None,
     include_archive: bool = False,
     singularity: bool = False,
     natif: bool = False,
@@ -1071,6 +1114,7 @@ def main(
             imager_version=imager_version,
             piic_only=piic_only,
             archive_gildas=archive_gildas,
+            log_dir=log_dir,
         )
         return
 
@@ -1091,7 +1135,8 @@ def main(
         print(_format_natif_comment(cmd))
         print(cmd.command)
         if execute:
-            subprocess.run(cmd.command, shell=True, check=True)
+            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
+            _run_logged(cmd.command, log)
         return
 
     commands = get_release_build_commands(
@@ -1104,7 +1149,7 @@ def main(
         imager_version=imager_version,
     )
 
-    _print_command_sections(commands, singularity, execute, piic_only)
+    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
 
 
 if __name__ == "__main__":
