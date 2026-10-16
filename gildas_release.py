@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Build/print docker & singularity commands for GILDAS releases."""
 import functools
 import logging
 import re
@@ -20,179 +21,131 @@ GILDAS_ARCHIVE_URL = "https://www.iram.fr/~gildas/dist/archive/gildas"
 PIIC_ARCHIVE_URL = "https://www.iram.fr/~gildas/dist/archive/piic"
 IMAGER_URL = "https://share.oasu.u-bordeaux.fr/imager"
 IMAGER_LAST = "last"
-
 REQUEST_TIMEOUT = 30
+LATEST_DEF = "gildas-latest.def"
+NATIF_DEF = "gildas-natif.def"
 
 logger = logging.getLogger(__name__)
-
-
 SECTION_WITHOUT_PIIC = "without-piic"
 SECTION_WITH_PIIC = "with-piic"
 
 
+def _anchors(url: str) -> List[str]:
+    r = requests.get(url, timeout=REQUEST_TIMEOUT)
+    r.raise_for_status()
+    return [a.get("href", "") for a in BeautifulSoup(r.text, features="html.parser").find_all("a")]
+
+
 def gildas_release(package: str, archive: bool = False) -> List[str]:
-    """Return available GILDAS or PIIC releases from IRAM website.
+    """List available GILDAS or PIIC release identifiers.
 
     Parameters
     ----------
-    package : {"gildas", "piic"}
-        Logical package name. "gildas" maps to ``gildas-src-*`` tarballs,
-        "piic" maps to ``piic-exe-*`` tarballs.
+    package : str
+        ``"gildas"`` (``gildas-src-*`` tarballs) or ``"piic"``
+        (``piic-exe-*`` tarballs).
     archive : bool, optional
-        If True, query the corresponding archive directory instead of the
-        main distribution directory. Defaults to False.
+        Query the archive tree instead of the main distribution tree.
 
     Returns
     -------
     list of str
-        List of release identifiers (e.g. ``"jan26a"``).
+        Sorted release identifiers, e.g. ``"jan26a"``.
 
     Raises
     ------
+    ValueError
+        If ``package`` is unknown.
     requests.HTTPError
-        If the HTTP request to the IRAM server fails.
+        If the upstream request fails.
     """
-    uri = GILDAS_MAIN_URL + "/"
-
-    if archive and package == "gildas":
-        uri = GILDAS_ARCHIVE_URL
-    elif archive and package == "piic":
-        uri = PIIC_ARCHIVE_URL
-
-    if package == "gildas":
-        prefix = "gildas-src"
-    elif package == "piic":
-        prefix = "piic-exe"
-    else:
-        logger.error("Unknown package '%s' requested in gildas_release", package)
+    prefix = {"gildas": "gildas-src", "piic": "piic-exe"}.get(package)
+    if prefix is None:
         raise ValueError(f"Unknown package '{package}'")
-
-    r = requests.get(uri, timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, features="html.parser")
-    releases: List[str] = []
-    for link in soup.find_all("a"):
-        href = link.get("href", "")
-        if not href or ".tar.xz" not in href:
-            continue
-        filename = href.rsplit("/", 1)[-1]
-        if not filename.startswith(prefix + "-"):
-            continue
-        # gildas-src-<release>.tar.xz -> <release>
-        try:
-            release = filename[len(prefix) + 1 :].split(".tar.xz")[0]
-        except IndexError:
-            continue
-        if release and not release.startswith("ifort"):
-            releases.append(release)
-
-    return sorted(set(releases))
+    url = GILDAS_MAIN_URL + "/"
+    if archive:
+        url = GILDAS_ARCHIVE_URL if package == "gildas" else PIIC_ARCHIVE_URL
+    out = set()
+    for href in _anchors(url):
+        name = href.rsplit("/", 1)[-1]
+        if name.startswith(prefix + "-") and ".tar.xz" in name:
+            rel = name[len(prefix) + 1:].split(".tar.xz")[0]
+            if rel and not rel.startswith("ifort"):
+                out.add(rel)
+    return sorted(out)
 
 
 def imager_release() -> List[str]:
-    """Return available standalone IMAGER versions.
-
-    Lists ``imager-<version>.tgz`` tarballs from the OASU share server,
-    excluding the ``last``/``beta`` aliases and documentation archives.
-
-    Note: the server (dufs) renders a JS UI by default and only serves
-    the static file listing at ``?noscript`` (curl gets it via UA
-    sniffing), so request that endpoint explicitly.
+    """List available standalone IMAGER versions.
 
     Returns
     -------
     list of str
-        List of IMAGER version identifiers (e.g. ``"oct26"``).
+        Sorted IMAGER versions, e.g. ``"oct26"``. Excludes the
+        ``"last"``/``"beta"`` aliases and documentation archives.
 
     Raises
     ------
     requests.HTTPError
-        If the HTTP request to the IMAGER server fails.
+        If the upstream request fails.
     """
-    r = requests.get(IMAGER_URL + "/?noscript", timeout=REQUEST_TIMEOUT)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, features="html.parser")
-    versions: List[str] = []
-    for link in soup.find_all("a"):
-        href = link.get("href", "")
-        if not href:
-            continue
-        filename = href.rsplit("/", 1)[-1]
-        if not filename.startswith("imager-") or not filename.endswith(".tgz"):
-            continue
-        version = filename[len("imager-") : -len(".tgz")]
-        if version and version not in ("last", "beta") and not version.startswith("doc-"):
-            versions.append(version)
-
-    return sorted(set(versions))
+    out = set()
+    for href in _anchors(IMAGER_URL + "/?noscript"):
+        name = href.rsplit("/", 1)[-1]
+        if name.startswith("imager-") and name.endswith(".tgz"):
+            v = name[len("imager-"):-len(".tgz")]
+            if v and v not in ("last", "beta") and not v.startswith("doc-"):
+                out.add(v)
+    return sorted(out)
 
 
 @functools.lru_cache(maxsize=1)
 def _cached_imager_versions() -> tuple:
-    """Cached IMAGER version list (single small index fetch per run)."""
     return tuple(imager_release())
 
 
 def imager_version_for_release(release: str, available: Sequence[str] | None = None) -> str:
     """Return the IMAGER version coupled to a GILDAS release.
 
-    GILDAS releases are named ``monYYx`` (e.g. ``"oct26a"``) while IMAGER
-    versions drop the trailing letter (e.g. ``"oct26"``). When no
-    matching IMAGER version exists upstream, fall back to ``"last"``.
-
     Parameters
     ----------
     release : str
-        GILDAS release identifier.
+        GILDAS release identifier, e.g. ``"oct26a"``.
     available : sequence of str or None, optional
         Known IMAGER versions. Defaults to the live upstream list.
 
     Returns
     -------
     str
-        Matching IMAGER version, or ``"last"`` when none matches.
+        Matching IMAGER version (trailing letter stripped), or ``"last"``
+        when none matches (resolved to a concrete version live when possible).
     """
-    if available is None:
-        available = _cached_imager_versions()
-        live = True
-    else:
-        live = False
-    candidate = release[:-1] if release[-1:].isalpha() else release
-    if candidate in available:
-        return candidate
+    live = available is None
     if live:
-        # Brand-new GILDAS without a matching IMAGER yet: resolve the
-        # floating alias to whatever it points to *now*, so the image
-        # records a concrete version and later drift is detectable.
+        available = _cached_imager_versions()
+    cand = release[:-1] if release[-1:].isalpha() else release
+    if cand in available:
+        return cand
+    if live:
         resolved = _resolve_imager_alias(IMAGER_LAST)
         if resolved != IMAGER_LAST:
-            logger.warning(
-                "No matching IMAGER version for release '%s', using '%s' (resolved '%s')",
-                release,
-                IMAGER_LAST,
-                resolved,
-            )
+            logger.warning("No IMAGER for '%s', using '%s'", release, resolved)
             return resolved
-    logger.warning("No matching IMAGER version for release '%s', using '%s'", release, IMAGER_LAST)
+    logger.warning("No IMAGER for '%s', using '%s'", release, IMAGER_LAST)
     return IMAGER_LAST
 
 
 @functools.lru_cache(maxsize=4)
 def _resolve_imager_alias(alias: str = IMAGER_LAST) -> str:
-    """Resolve a floating IMAGER version (e.g. ``last``) to a concrete one.
-
-    Streams only the start of ``imager-<alias>.tgz``: its first tar member
-    is the top-level ``imager-src-<version>`` directory. Returns the alias
-    unchanged when resolution fails (offline, unknown alias).
-    """
+    """Resolve floating IMAGER alias via first member of its tgz."""
     try:
         with requests.get(f"{IMAGER_URL}/imager-{alias}.tgz", stream=True, timeout=REQUEST_TIMEOUT) as r:
             r.raise_for_status()
             r.raw.decode_content = True
             with tarfile.open(fileobj=r.raw, mode="r|gz") as tar:
-                member = tar.next()
-                if member and member.name.startswith("imager-src-"):
-                    return member.name[len("imager-src-") :].strip("/")
+                m = tar.next()
+                if m and m.name.startswith("imager-src-"):
+                    return m.name[len("imager-src-"):].strip("/")
     except Exception as exc:
         logger.debug("Could not resolve IMAGER alias '%s': %s", alias, exc)
     return alias
@@ -200,386 +153,152 @@ def _resolve_imager_alias(alias: str = IMAGER_LAST) -> str:
 
 @functools.lru_cache(maxsize=32)
 def _image_labels(tag: str) -> dict | None:
-    """Return image config labels for a Hub tag, or None when unreadable.
-
-    Anonymous Bearer flow against the Hub registry. Any failure yields
-    None, which callers treat as fresh: network errors must never trigger
-    rebuilds.
-    """
+    """Hub image labels, or None on any failure (never fail builds on net errors)."""
     try:
-        session = requests.Session()
-        manifest_url = f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{tag}"
-        headers = {
-            "Accept": ", ".join(
-                [
-                    "application/vnd.docker.distribution.manifest.v2+json",
-                    "application/vnd.oci.image.manifest.v1+json",
-                    "application/vnd.docker.distribution.manifest.list.v2+json",
-                    "application/vnd.oci.image.index.v1+json",
-                ]
-            )
-        }
-        r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+        s = requests.Session()
+        url = f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{tag}"
+        h = {"Accept": "application/vnd.docker.distribution.manifest.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.index.v1+json"}
+        r = s.get(url, headers=h, timeout=REQUEST_TIMEOUT)
         if r.status_code == 401:
-            auth = r.headers.get("WWW-Authenticate", "")
-            realm = re.search(r'realm="([^"]+)"', auth).group(1)
-            service = re.search(r'service="([^"]+)"', auth).group(1)
-            scope = re.search(r'scope="([^"]+)"', auth).group(1)
-            token = (
-                session.get(realm, params={"service": service, "scope": scope}, timeout=REQUEST_TIMEOUT)
-                .json()["token"]
-            )
-            headers["Authorization"] = f"Bearer {token}"
-            r = session.get(manifest_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            a = r.headers.get("WWW-Authenticate", "")
+            realm = re.search(r'realm="([^"]+)"', a).group(1)
+            svc = re.search(r'service="([^"]+)"', a).group(1)
+            scope = re.search(r'scope="([^"]+)"', a).group(1)
+            h["Authorization"] = f"Bearer {s.get(realm, params={'service': svc, 'scope': scope}, timeout=REQUEST_TIMEOUT).json()['token']}"
+            r = s.get(url, headers=h, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
-        manifest = r.json()
-        if "manifests" in manifest:  # multi-arch index: first entry wins
-            digest = manifest["manifests"][0]["digest"]
-            r = session.get(
-                f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{digest}",
-                headers=headers,
-                timeout=REQUEST_TIMEOUT,
-            )
+        man = r.json()
+        if "manifests" in man:
+            d = man["manifests"][0]["digest"]
+            r = s.get(f"https://registry-1.docker.io/v2/{DOCKER_REPO}/manifests/{d}", headers=h, timeout=REQUEST_TIMEOUT)
             r.raise_for_status()
-            manifest = r.json()
-        digest = manifest.get("config", {}).get("digest", "")
-        if not digest:
+            man = r.json()
+        d = man.get("config", {}).get("digest", "")
+        if not d:
             return None
-        blob = session.get(
-            f"https://registry-1.docker.io/v2/{DOCKER_REPO}/blobs/{digest}",
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
-        blob.raise_for_status()
-        return blob.json().get("config", {}).get("Labels") or {}
+        b = s.get(f"https://registry-1.docker.io/v2/{DOCKER_REPO}/blobs/{d}", headers=h, timeout=REQUEST_TIMEOUT)
+        b.raise_for_status()
+        return b.json().get("config", {}).get("Labels") or {}
     except Exception as exc:
         logger.debug("Could not read labels of %s:%s: %s", DOCKER_REPO, tag, exc)
         return None
 
 
 def _imager_stale(tag: str, expected: str) -> bool:
-    """True when a published tag bundles an outdated IMAGER.
-
-    Compares the expected (resolved, concrete) version against the
-    ``abeelen.gildas.imager-version`` image label. Unreadable labels
-    count as fresh (never rebuild on network errors); missing labels
-    count as stale (one-time catch-up for pre-label images); a floating
-    ``last`` on either side is uncomparable, hence fresh.
-    """
+    """True if published tag bundles an outdated IMAGER (fail-open: False)."""
     if expected == IMAGER_LAST:
         return False
     labels = _image_labels(tag)
     if labels is None:
         return False
-    recorded = labels.get("abeelen.gildas.imager-version", "")
-    if not recorded:
+    rec = labels.get("abeelen.gildas.imager-version", "")
+    if not rec:
         return True
-    if recorded == IMAGER_LAST:
-        return False
-    return recorded != expected
+    return rec != expected and rec != IMAGER_LAST
 
 
 def _docker_tags() -> List[str]:
-    """Return existing tags for the Docker repository.
-
-    Follows Docker Hub pagination instead of assuming a single page.
-    """
-
-    tags: List[str] = []
-    url: str | None = (
-        f"https://registry.hub.docker.com/v2/repositories/{DOCKER_REPO}/tags/?page_size=100"
-    )
+    """All Hub tags (follows pagination)."""
+    tags, url = [], f"https://registry.hub.docker.com/v2/repositories/{DOCKER_REPO}/tags/?page_size=100"
     while url:
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
-        data = r.json()
-        tags.extend(item["name"] for item in data.get("results", []) if "name" in item)
-        url = data.get("next")
+        d = r.json()
+        tags += [i["name"] for i in d.get("results", []) if "name" in i]
+        url = d.get("next")
     return tags
 
 
-def _build_arg_for_release(
-    release: str,
-    main_releases: Sequence[str],
-    archived_releases: Sequence[str],
-    arg_name: str,
-    archive_url: str,
-    package_name: str,
-) -> str:
-    """Return appropriate ``--build-arg`` fragment for a release.
-
-    Parameters
-    ----------
-    release : str
-        Release identifier (e.g. ``"jan26a"``).
-    main_releases : sequence of str
-        Releases available in the main distribution tree.
-    archived_releases : sequence of str
-        Releases available only in the archive tree.
-    arg_name : str
-        Name of the Docker build argument controlling the base URL
-        (e.g. ``"GILDAS_URL"``).
-    archive_url : str
-        Base URL of the archive tree corresponding to ``arg_name``.
-    package_name : str
-        Human-readable package name used for error messages.
-
-    Returns
-    -------
-    str
-        Empty string if ``release`` is in ``main_releases``, or a fragment
-        of the form ``"--build-arg <ARG_NAME>=<ARCHIVE_URL>"`` if it is
-        only available in ``archived_releases``.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the release is not found in either main or archive trees.
-    """
-
-    if release in main_releases:
+def _build_arg_for_release(release, main, archived, arg_name, archive_url, package_name="") -> str:
+    if release in main:
         return ""
-    if release in archived_releases:
+    if release in archived:
         return f"--build-arg {arg_name}={archive_url}"
-    raise FileNotFoundError(f"{package_name} release '{release}' not found in main or archive trees")
+    raise FileNotFoundError(f"{package_name} release '{release}' not found in main or archive")
 
 
-def _release_sort_key(release: str) -> tuple[int, int, int, str]:
-    """Sort key to order releases chronologically.
-
-    Assumes releases are named like ``monYYx`` where ``mon`` is a
-    three-letter English month abbreviation, ``YY`` the two-digit year,
-    and ``x`` an optional letter within the month (a, b, c, ...).
-
-    All known releases are post-2000, so ``YY`` always maps to 20YY.
-    Unknown patterns sort first but deterministically by name.
-    """
-
-    month_map = {
-        "jan": 1,
-        "feb": 2,
-        "mar": 3,
-        "apr": 4,
-        "may": 5,
-        "jun": 6,
-        "jul": 7,
-        "aug": 8,
-        "sep": 9,
-        "oct": 10,
-        "nov": 11,
-        "dec": 12,
-    }
-
+def _release_sort_key(release: str):
+    """monYYx -> (year, month, sub); unknown sorts first."""
+    months = {m: i + 1 for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
     try:
-        mon = release[:3].lower()
-        year_part = release[3:5]
+        m, yy = release[:3].lower(), int(release[3:5])
         letter = release[5:6] if len(release) > 5 else "a"
-
-        month = month_map[mon]
-        yy = int(year_part)
-        year = 2000 + yy
-        # Map 'a' -> 1, 'b' -> 2, ...; default to 0 if unexpected
-        sub = ord(letter.lower()) - ord("a") + 1 if letter.isalpha() else 0
-        return year, month, sub, ""
+        sub = ord(letter.lower()) - 96 if letter.isalpha() else 0
+        return 2000 + yy, months[m], sub, ""
     except Exception:
-        # Fallback: group unknown patterns first, ordered lexicographically
-        logger.warning("Unable to parse release name '%s' for sorting", release)
+        logger.warning("Unable to parse release name '%s'", release)
         return 0, 0, 0, release
 
 
 @dataclass(frozen=True)
 class ReleaseSets:
-    """Container for Docker tags and known upstream releases."""
+    """Upstream state used to derive build commands.
 
+    Parameters
+    ----------
+    tags : list of str
+        Existing Docker Hub tags.
+    gildas : list of str
+        Main-tree GILDAS releases.
+    archived_gildas : list of str
+        Archive-only GILDAS releases.
+    piic : list of str
+        Main-tree PIIC releases.
+    archived_piic : list of str
+        Archive-only PIIC releases.
+    """
     tags: List[str]
     gildas: List[str]
     archived_gildas: List[str]
     piic: List[str]
     archived_piic: List[str]
 
+    def all_releases(self):
+        return sorted(set(self.gildas) | set(self.archived_gildas) | set(self.piic) | set(self.archived_piic), key=_release_sort_key)
 
-def _load_release_sets_uncached(
-    include_archive: bool = False, archive_gildas: bool = False
-) -> ReleaseSets:
-    """Fetch Docker tags + IRAM listings in parallel.
 
-    Archive trees are only queried when needed: the PIIC archive when
-    ``include_archive`` is True, the GILDAS archive when either flag is
-    set (PIIC releases lag behind GILDAS ones, so their matching GILDAS
-    tarball is often archived already).
-    """
-
-    query_arch_gildas = include_archive or archive_gildas
-    with ThreadPoolExecutor(max_workers=5) as pool:
-        f_tags = pool.submit(_docker_tags)
-        f_gildas = pool.submit(gildas_release, "gildas")
-        f_piic = pool.submit(gildas_release, "piic")
-        if query_arch_gildas:
-            f_arch_gildas = pool.submit(gildas_release, "gildas", True)
-        else:
-            f_arch_gildas = None
+def _load_release_sets_uncached(include_archive=False, archive_gildas=False) -> ReleaseSets:
+    """Fetch Hub tags + IRAM listings in parallel (archives only when needed)."""
+    need_g = include_archive or archive_gildas
+    with ThreadPoolExecutor(max_workers=5) as p:
+        jobs = {"tags": p.submit(_docker_tags), "gildas": p.submit(gildas_release, "gildas"),
+                "piic": p.submit(gildas_release, "piic")}
+        if need_g:
+            jobs["ag"] = p.submit(gildas_release, "gildas", True)
         if include_archive:
-            f_arch_piic = pool.submit(gildas_release, "piic", True)
-        else:
-            f_arch_piic = None
-        return ReleaseSets(
-            tags=f_tags.result(),
-            gildas=f_gildas.result(),
-            archived_gildas=f_arch_gildas.result() if f_arch_gildas else [],
-            piic=f_piic.result(),
-            archived_piic=f_arch_piic.result() if f_arch_piic else [],
-        )
+            jobs["ap"] = p.submit(gildas_release, "piic", True)
+        g = lambda k: jobs[k].result() if k in jobs else []
+        return ReleaseSets(g("tags"), g("gildas"), g("ag"), g("piic"), g("ap"))
 
 
 @functools.lru_cache(maxsize=8)
-def _load_release_sets(include_archive: bool = False, archive_gildas: bool = False) -> ReleaseSets:
-    """Load Docker tags and known releases for GILDAS and PIIC (cached)."""
+def _load_release_sets(include_archive=False, archive_gildas=False) -> ReleaseSets:
     return _load_release_sets_uncached(include_archive, archive_gildas)
 
 
-def _join_parts(parts: List[str]) -> str:
-    """Join command parts, dropping empty ``--build-arg`` fragments."""
-    return " ".join(p for p in parts if p)
-
-
-def _docker_build_push(
-    main_tag: str,
-    latest_tag: str,
-    middle_args: Sequence[str],
-    dockerfile: str,
-    tag_latest: bool,
-    alias_latest: str | None = None,
-) -> str:
-    """Assemble a ``docker build ... && docker push ...`` command string.
-
-    ``alias_latest`` adds an extra unsuffixed alias tag (``latest`` or
-    ``latest-piic``) pointing at the Alpine image.
-    """
-
-    parts = ["docker build", f"--tag {DOCKER_REPO}:{main_tag}"]
-    if tag_latest:
-        parts.append(f"--tag {DOCKER_REPO}:{latest_tag}")
-    if tag_latest and alias_latest:
-        parts.append(f"--tag {DOCKER_REPO}:{alias_latest}")
-    parts += [*middle_args, f"-f {shlex.quote(dockerfile)} ."]
-    push = f"docker push {DOCKER_REPO}:{main_tag}"
-    if tag_latest:
-        push += f" && docker push {DOCKER_REPO}:{latest_tag}"
-    if tag_latest and alias_latest:
-        push += f" && docker push {DOCKER_REPO}:{alias_latest}"
-    return f"{_join_parts(parts)} && {push}"
-
-
 def _tag_suffix(dockerfile: str) -> str:
-    """Tag suffix for a Dockerfile.
-
-    Every tag carries its base explicitly: Alpine images get ``-alpine``,
-    Debian images ``-debian`` (e.g. ``oct26a-alpine``,
-    ``latest-piic-debian``). The unsuffixed ``latest``/``latest-piic``
-    tags are aliases of the Alpine ones (see ``_docker_build_push``).
-    """
     return "-alpine" if dockerfile.endswith("alpine") else "-debian"
-
-
-def build_without_piic_command(
-    gildas: Sequence[str],
-    archived_gildas: Sequence[str],
-    release: str,
-    dockerfile: str = "Dockerfile.alpine",
-    tag_latest: bool = False,
-    imager_version: str | None = None,
-) -> str:
-    """Build docker commands for a GILDAS-only release."""
-
-    arg = _build_arg_for_release(
-        release,
-        main_releases=gildas,
-        archived_releases=archived_gildas,
-        arg_name="GILDAS_URL",
-        archive_url=GILDAS_ARCHIVE_URL,
-        package_name="gildas",
-    )
-
-    if imager_version is None:
-        imager_version = imager_version_for_release(release)
-
-    suffix = _tag_suffix(dockerfile)
-    main_tag = f"{release}{suffix}"
-    latest_tag = f"latest{suffix}"
-    alias = "latest" if dockerfile.endswith("alpine") else None
-
-    parts = [
-        "--target gildas",
-        arg,
-        f"--build-arg release={shlex.quote(release)}",
-        f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
-    ]
-    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest, alias)
-
-
-def build_with_piic_command(
-    gildas: Sequence[str],
-    archived_gildas: Sequence[str],
-    piic: Sequence[str],
-    archived_piic: Sequence[str],
-    release: str,
-    dockerfile: str = "Dockerfile.alpine",
-    tag_latest: bool = False,
-    imager_version: str | None = None,
-) -> str | None:
-    """Build docker commands for a combined GILDAS+PIIC release."""
-
-    # Check that the corresponding gildas release exists (main or archive)
-    try:
-        g_arg = _build_arg_for_release(
-            release,
-            main_releases=gildas,
-            archived_releases=archived_gildas,
-            arg_name="GILDAS_URL",
-            archive_url=GILDAS_ARCHIVE_URL,
-            package_name="gildas",
-        )
-    except FileNotFoundError as exc:
-        # Expected for old releases (no matching GILDAS tarball): debug only.
-        logger.debug("Skipping PIIC build for %s: %s", release, exc)
-        return None
-
-    try:
-        p_arg = _build_arg_for_release(
-            release,
-            main_releases=piic,
-            archived_releases=archived_piic,
-            arg_name="PIIC_URL",
-            archive_url=PIIC_ARCHIVE_URL,
-            package_name="piic",
-        )
-    except FileNotFoundError as exc:
-        # Expected for old releases (no PIIC tarball): debug only.
-        logger.debug("Skipping PIIC build for %s (no PIIC archive): %s", release, exc)
-        return None
-
-    if imager_version is None:
-        imager_version = imager_version_for_release(release)
-
-    suffix = _tag_suffix(dockerfile)
-    main_tag = f"{release}-piic{suffix}"
-    latest_tag = f"latest-piic{suffix}"
-    alias = "latest-piic" if dockerfile.endswith("alpine") else None
-
-    parts = [
-        "--target gildas-piic",
-        g_arg,
-        p_arg,
-        f"--build-arg release={shlex.quote(release)}",
-        f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
-    ]
-    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest, alias)
 
 
 @dataclass
 class BuildCommand:
-    """Structured representation of a docker build/push command."""
+    """Docker build/push command for one release variant.
 
+    Parameters
+    ----------
+    section : str
+        ``"without-piic"`` or ``"with-piic"``.
+    release : str
+        GILDAS release identifier.
+    in_dockerhub : bool
+        Whether the tag already exists on Docker Hub.
+    command : str
+        Shell command to build and push the image.
+    alpine : bool, optional
+        Alpine base (default False = Debian).
+    stale_imager : bool, optional
+        Published tag bundles an outdated IMAGER.
+    """
     section: str
     release: str
     in_dockerhub: bool
@@ -588,172 +307,23 @@ class BuildCommand:
     stale_imager: bool = False
 
 
-def get_release_build_commands(
-    release_name: str,
-    missing_only: bool = False,
-    dockerfile: str = "Dockerfile.alpine",
-    tag_latest: bool = False,
-    sets: ReleaseSets | None = None,
-    tag_latest_piic: bool | None = None,
-    include_archive: bool = False,
-    archive_gildas: bool = False,
-    imager_version: str | None = None,
-) -> List[BuildCommand]:
-    """Return docker commands for a specific release.
-
-    ``tag_latest`` controls the ``latest-alpine``/``latest-debian`` tag on
-    the GILDAS image (plus the unsuffixed ``latest`` alias for Alpine);
-    ``tag_latest_piic`` controls ``latest-piic-alpine``/``-debian`` (plus
-    the ``latest-piic`` alias, defaults to the value of ``tag_latest``
-    when not given). Archived releases are only
-    considered when ``include_archive`` is True. ``imager_version``
-    overrides the coupled IMAGER version (auto-mapped from the release
-    when not given).
-    """
-
-    if tag_latest_piic is None:
-        tag_latest_piic = tag_latest
-
-    if sets is None:
-        sets = _load_release_sets(include_archive, archive_gildas)
-    tags = sets.tags
-    gildas = sets.gildas
-    archived_gildas = sets.archived_gildas if (include_archive or archive_gildas) else []
-    piic = sets.piic
-    archived_piic = sets.archived_piic if include_archive else []
-
-    commands: List[BuildCommand] = []
-
-    is_alpine = dockerfile.endswith("alpine")
-    suffix = _tag_suffix(dockerfile)
-
-    # Resolve once so builders and the freshness check below agree.
-    expected_imager = imager_version or imager_version_for_release(release_name)
-    # Freshness only applies to main-tree releases: archived ones are
-    # immutable snapshots (their IMAGER version was pinned at build time).
-    check_fresh = release_name in gildas or release_name in piic
-
-    # GILDAS only
-    if release_name in gildas or release_name in archived_gildas:
-        command = build_without_piic_command(
-            gildas,
-            archived_gildas,
-            release_name,
-            dockerfile=dockerfile,
-            tag_latest=tag_latest,
-            imager_version=expected_imager,
-        )
-        base_tag = f"{release_name}{suffix}"
-        in_dockerhub = base_tag in tags
-        stale = check_fresh and in_dockerhub and _imager_stale(base_tag, expected_imager)
-
-        if not missing_only or not in_dockerhub or stale:
-            commands.append(
-                BuildCommand(
-                    section=SECTION_WITHOUT_PIIC,
-                    release=release_name,
-                    in_dockerhub=in_dockerhub,
-                    command=command,
-                    alpine=is_alpine,
-                    stale_imager=stale,
-                )
-            )
-
-    # GILDAS + PIIC
-    if release_name in piic or release_name in archived_piic:
-        command = build_with_piic_command(
-            gildas,
-            archived_gildas,
-            piic,
-            archived_piic,
-            release_name,
-            dockerfile=dockerfile,
-            tag_latest=tag_latest_piic,
-            imager_version=expected_imager,
-        )
-        if command:
-            piic_tag = f"{release_name}-piic{suffix}"
-            in_dockerhub = piic_tag in tags
-            stale = check_fresh and in_dockerhub and _imager_stale(piic_tag, expected_imager)
-
-            if not missing_only or not in_dockerhub or stale:
-                commands.append(
-                    BuildCommand(
-                        section=SECTION_WITH_PIIC,
-                        release=release_name,
-                        in_dockerhub=in_dockerhub,
-                        command=command,
-                        alpine=is_alpine,
-                        stale_imager=stale,
-                    )
-                )
-
-    return commands
-
-
-def get_build_commands(
-    missing_only: bool = False,
-    dockerfile: str = "Dockerfile.alpine",
-    tag_latest: bool | None = None,
-    include_archive: bool = False,
-    archive_gildas: bool = False,
-    imager_version: str | None = None,
-) -> List[BuildCommand]:
-    """Return docker commands for all known releases (deduplicated).
-
-    When ``tag_latest`` is None (the default), the newest GILDAS release
-    gets the ``latest-alpine``/``latest-debian`` tag (plus the unsuffixed
-    ``latest`` alias for Alpine) and the newest GILDAS+PIIC release gets
-    the ``latest-piic-*`` tag (tracked independently, so a newer
-    GILDAS-only release does not steal ``latest-piic`` from the newest
-    PIIC one).
-    Pass True to tag every command with ``latest``, False for none.
-    """
-
-    sets = _load_release_sets(include_archive, archive_gildas)
-    # Deduplicate: the same release appears in main+archive and gildas+piic.
-    all_releases = sorted(
-        set(sets.archived_gildas) | set(sets.gildas) | set(sets.archived_piic) | set(sets.piic),
-        key=_release_sort_key,
-    )
-    gildas_releases = sorted(set(sets.gildas) | set(sets.archived_gildas), key=_release_sort_key)
-    piic_releases = sorted(
-        # A PIIC image needs both tarballs, so intersect with GILDAS ones.
-        (set(sets.piic) | set(sets.archived_piic)) & (set(sets.gildas) | set(sets.archived_gildas)),
-        key=_release_sort_key,
-    )
-    newest_gildas = gildas_releases[-1] if gildas_releases else None
-    newest_piic = piic_releases[-1] if piic_releases else None
-
-    commands: List[BuildCommand] = []
-
-    for release in all_releases:
-        if tag_latest is None:
-            g_latest = release == newest_gildas
-            p_latest = release == newest_piic
-        else:
-            g_latest = p_latest = tag_latest
-        commands.extend(
-            get_release_build_commands(
-                release,
-                missing_only=missing_only,
-                dockerfile=dockerfile,
-                    tag_latest=g_latest,
-                tag_latest_piic=p_latest,
-                sets=sets,
-                include_archive=include_archive,
-                archive_gildas=archive_gildas,
-                imager_version=imager_version,
-            )
-        )
-
-    return commands
-
-
 @dataclass
 class NatifCommand:
-    """Structured representation of a native `singularity build` command."""
+    """Native ``singularity build`` command for one release.
 
+    Parameters
+    ----------
+    release : str
+        GILDAS release identifier.
+    has_piic : bool
+        PIIC tarball available upstream (bundled).
+    command : str
+        Shell command to build the SIF.
+    alpine : bool, optional
+        Alpine base.
+    imager_version : str, optional
+        Pinned IMAGER version.
+    """
     release: str
     has_piic: bool
     command: str
@@ -761,414 +331,415 @@ class NatifCommand:
     imager_version: str = IMAGER_LAST
 
 
-def natif_command(
-    release: str,
-    sets: ReleaseSets,
-    dockerfile: str = "Dockerfile.alpine",
-    imager_version: str | None = None,
-) -> NatifCommand | None:
-    """Return the native SIF build command for a release, if buildable.
+def _image_tag(cmd: BuildCommand) -> str:
+    suf = "-alpine" if cmd.alpine else "-debian"
+    return f"{cmd.release}-piic{suf}" if cmd.section == SECTION_WITH_PIIC else f"{cmd.release}{suf}"
 
-    Unlike the Docker targets, a native build always bundles PIIC when
-    the corresponding tarball exists upstream, so there is a single
-    command per release. Archive URL overrides are included only when
-    the release is not in the main distribution tree. The coupled
-    IMAGER version is pinned explicitly (auto-mapped when not given).
-    """
 
-    gildas = set(sets.gildas) | set(sets.archived_gildas)
-    if release not in gildas:
+def _natif_tag(cmd: NatifCommand) -> str:
+    return f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
+
+
+def _docker_build_push(main_tag, latest_tag, middle, dockerfile, tag_latest, alias=None) -> str:
+    tags = [main_tag] + ([latest_tag] + ([alias] if alias else []) if tag_latest else [])
+    build = f"docker build {' '.join(f'--tag {DOCKER_REPO}:{t}' for t in tags)} {' '.join(p for p in middle if p)} -f {shlex.quote(dockerfile)} ."
+    return f"{build} && {' && '.join(f'docker push {DOCKER_REPO}:{t}' for t in tags)}"
+
+
+def _docker_cmd(gildas, agildas, piic, apiic, release, *, with_piic, dockerfile, tag_latest, imager) -> str | None:
+    """Shared docker builder; None when a needed tarball is missing."""
+    try:
+        g_arg = _build_arg_for_release(release, gildas, agildas, "GILDAS_URL", GILDAS_ARCHIVE_URL, "gildas")
+        p_arg = _build_arg_for_release(release, piic, apiic, "PIIC_URL", PIIC_ARCHIVE_URL, "piic") if with_piic else ""
+    except FileNotFoundError as exc:
+        logger.debug("Skipping %s: %s", release, exc)
         return None
+    suf = _tag_suffix(dockerfile)
+    alpine = dockerfile.endswith("alpine")
+    if with_piic:
+        main, latest, alias, target = f"{release}-piic{suf}", f"latest-piic{suf}", "latest-piic" if alpine else None, "gildas-piic"
+    else:
+        main, latest, alias, target = f"{release}{suf}", f"latest{suf}", "latest" if alpine else None, "gildas"
+    imager = imager or imager_version_for_release(release)
+    return _docker_build_push(main, latest, ["--target " + target, g_arg, p_arg, f"--build-arg release={shlex.quote(release)}", f"--build-arg IMAGER_VERSION={shlex.quote(imager)}"], dockerfile, tag_latest, alias)
 
+
+def build_without_piic_command(gildas, archived_gildas, release, dockerfile="Dockerfile.alpine", tag_latest=False, imager_version=None) -> str:
+    """Build the docker command for a GILDAS-only release.
+
+    Parameters
+    ----------
+    gildas : sequence of str
+        Main-tree GILDAS releases.
+    archived_gildas : sequence of str
+        Archive-only GILDAS releases.
+    release : str
+        Release identifier.
+    dockerfile : str, optional
+        Dockerfile variant.
+    tag_latest : bool, optional
+        Also tag ``latest``.
+    imager_version : str or None, optional
+        Pinned IMAGER version (auto-mapped when None).
+
+    Returns
+    -------
+    str
+        Shell command.
+    """
+    return _docker_cmd(gildas, archived_gildas, [], [], release, with_piic=False, dockerfile=dockerfile, tag_latest=tag_latest, imager=imager_version)
+
+
+def build_with_piic_command(gildas, archived_gildas, piic, archived_piic, release, dockerfile="Dockerfile.alpine", tag_latest=False, imager_version=None) -> str | None:
+    """Build the docker command for a GILDAS+PIIC release.
+
+    Parameters
+    ----------
+    gildas, archived_gildas, piic, archived_piic : sequence of str
+        Known releases per tree.
+    release : str
+        Release identifier.
+    dockerfile : str, optional
+        Dockerfile variant.
+    tag_latest : bool, optional
+        Also tag ``latest-piic``.
+    imager_version : str or None, optional
+        Pinned IMAGER version (auto-mapped when None).
+
+    Returns
+    -------
+    str or None
+        Shell command, or None when a needed tarball is missing.
+    """
+    return _docker_cmd(gildas, archived_gildas, piic, archived_piic, release, with_piic=True, dockerfile=dockerfile, tag_latest=tag_latest, imager=imager_version)
+
+
+def get_release_build_commands(release_name, missing_only=False, dockerfile="Dockerfile.alpine", tag_latest=False, sets=None, tag_latest_piic=None, include_archive=False, archive_gildas=False, imager_version=None) -> List[BuildCommand]:
+    """Return docker commands for a specific release.
+
+    Parameters
+    ----------
+    release_name : str
+        Release identifier.
+    missing_only : bool, optional
+        Skip tags already on Hub (unless IMAGER is stale).
+    dockerfile : str, optional
+        Dockerfile variant.
+    tag_latest : bool, optional
+        Tag ``latest`` on the GILDAS image.
+    sets : ReleaseSets or None, optional
+        Upstream state (loaded when None).
+    tag_latest_piic : bool or None, optional
+        Tag ``latest-piic`` (defaults to ``tag_latest``).
+    include_archive, archive_gildas : bool, optional
+        Consider archived releases.
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+
+    Returns
+    -------
+    list of BuildCommand
+    """
+    tag_latest_piic = tag_latest if tag_latest_piic is None else tag_latest_piic
+    sets = sets or _load_release_sets(include_archive, archive_gildas)
+    ag = sets.archived_gildas if (include_archive or archive_gildas) else []
+    ap = sets.archived_piic if include_archive else []
+    alpine = dockerfile.endswith("alpine")
+    expected = imager_version or imager_version_for_release(release_name)
+    fresh = release_name in sets.gildas or release_name in sets.piic
+    out = []
+    specs = [(SECTION_WITHOUT_PIIC, release_name in sets.gildas or release_name in ag, tag_latest, False),
+             (SECTION_WITH_PIIC, release_name in sets.piic or release_name in ap, tag_latest_piic, True)]
+    for section, known, latest, with_piic in specs:
+        if not known:
+            continue
+        cmd = _docker_cmd(sets.gildas, ag, sets.piic, ap, release_name, with_piic=with_piic, dockerfile=dockerfile, tag_latest=latest, imager=expected)
+        if not cmd:
+            continue
+        c = BuildCommand(section, release_name, False, cmd, alpine)
+        tag = _image_tag(c)
+        c = BuildCommand(section, release_name, tag in sets.tags, cmd, alpine,
+                         fresh and tag in sets.tags and _imager_stale(tag, expected))
+        if not missing_only or not c.in_dockerhub or c.stale_imager:
+            out.append(c)
+    return out
+
+
+def get_build_commands(missing_only=False, dockerfile="Dockerfile.alpine", tag_latest=None, include_archive=False, archive_gildas=False, imager_version=None) -> List[BuildCommand]:
+    """Return docker commands for all known releases.
+
+    Parameters
+    ----------
+    missing_only : bool, optional
+        Skip tags already on Hub.
+    dockerfile : str, optional
+        Dockerfile variant.
+    tag_latest : bool or None, optional
+        None tags the newest release per family; True/False forces it.
+    include_archive, archive_gildas : bool, optional
+        Consider archived releases.
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+
+    Returns
+    -------
+    list of BuildCommand
+    """
+    sets = _load_release_sets(include_archive, archive_gildas)
+    g = sorted(set(sets.gildas) | set(sets.archived_gildas), key=_release_sort_key)
+    p = sorted((set(sets.piic) | set(sets.archived_piic)) & (set(sets.gildas) | set(sets.archived_gildas)), key=_release_sort_key)
+    cmds = []
+    for rel in sets.all_releases():
+        gl = pl = tag_latest if tag_latest is not None else None
+        if tag_latest is None:
+            gl, pl = rel == (g[-1] if g else None), rel == (p[-1] if p else None)
+        cmds += get_release_build_commands(rel, missing_only, dockerfile, gl, sets, pl, include_archive, archive_gildas, imager_version)
+    return cmds
+
+
+def natif_command(release, sets, dockerfile="Dockerfile.alpine", imager_version=None) -> NatifCommand | None:
+    """Return the native SIF build command for a release.
+
+    Parameters
+    ----------
+    release : str
+        Release identifier.
+    sets : ReleaseSets
+        Upstream state.
+    dockerfile : str, optional
+        Dockerfile variant (selects base).
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+
+    Returns
+    -------
+    NatifCommand or None
+        None when the GILDAS tarball is unknown.
+    """
+    if release not in set(sets.gildas) | set(sets.archived_gildas):
+        return None
     has_piic = release in sets.piic or release in sets.archived_piic
-
-    if imager_version is None:
-        imager_version = imager_version_for_release(release)
-
-    # NOTE: SINGULARITYENV_ prefix is required: plain VAR=... prefixes
-    # never reach %post (silently dropped), only SINGULARITYENV_* does.
-    env = [
-        f"SINGULARITYENV_GILDAS_RELEASE={shlex.quote(release)}",
-        f"SINGULARITYENV_IMAGER_VERSION={shlex.quote(imager_version)}",
-    ]
+    imager_version = imager_version or imager_version_for_release(release)
+    env = [f"SINGULARITYENV_GILDAS_RELEASE={shlex.quote(release)}", f"SINGULARITYENV_IMAGER_VERSION={shlex.quote(imager_version)}"]
     if release not in sets.gildas:
         env.append(f"SINGULARITYENV_GILDAS_URL={GILDAS_ARCHIVE_URL}")
     if has_piic and release not in sets.piic:
         env.append(f"SINGULARITYENV_PIIC_URL={PIIC_ARCHIVE_URL}")
-
     alpine = dockerfile.endswith("alpine")
-    # Single def recipe for both bases (Alpine musl patches apply cleanly
-    # to either tree); the SIF name keeps the base for clarity.
-    deffile = "gildas-natif.def"
     sif = f"gildas-{release}-natif-alpine.sif" if alpine else f"gildas-{release}-natif.sif"
-    return NatifCommand(
-        release=release, has_piic=has_piic, command=f"{' '.join(env)} singularity build {sif} {deffile}", alpine=alpine, imager_version=imager_version
-    )
+    return NatifCommand(release, has_piic, f"{' '.join(env)} singularity build {sif} {NATIF_DEF}", alpine, imager_version)
 
 
-def get_natif_commands(
-    dockerfile: str = "Dockerfile.alpine",
-    include_archive: bool = False,
-    archive_gildas: bool = False,
-    sets: ReleaseSets | None = None,
-    imager_version: str | None = None,
-) -> List[NatifCommand]:
-    """Return native SIF build commands for all known releases."""
+def get_natif_commands(dockerfile="Dockerfile.alpine", include_archive=False, archive_gildas=False, sets=None, imager_version=None) -> List[NatifCommand]:
+    """Return native SIF build commands for all known releases.
 
-    if sets is None:
-        sets = _load_release_sets(include_archive, archive_gildas)
-    all_releases = sorted(
-        set(sets.archived_gildas) | set(sets.gildas) | set(sets.archived_piic) | set(sets.piic),
-        key=_release_sort_key,
-    )
-    commands: List[NatifCommand] = []
-    for release in all_releases:
-        cmd = natif_command(release, sets, dockerfile=dockerfile, imager_version=imager_version)
-        if cmd:
-            commands.append(cmd)
-    return commands
+    Parameters
+    ----------
+    dockerfile : str, optional
+        Dockerfile variant.
+    include_archive, archive_gildas : bool, optional
+        Consider archived releases.
+    sets : ReleaseSets or None, optional
+        Upstream state (loaded when None).
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+
+    Returns
+    -------
+    list of NatifCommand
+    """
+    sets = sets or _load_release_sets(include_archive, archive_gildas)
+    return [c for rel in sets.all_releases() if (c := natif_command(rel, sets, dockerfile, imager_version))]
+
+
+def singularity_command(cmd: BuildCommand, deffile: str = LATEST_DEF) -> str:
+    """Return a SIF build command via ``gildas-latest.def``.
+
+    Parameters
+    ----------
+    cmd : BuildCommand
+        Release variant to convert.
+    deffile : str, optional
+        Definition recipe.
+
+    Returns
+    -------
+    str
+        Shell command (``From:`` rewritten per tag).
+    """
+    tag = _image_tag(cmd)
+    image = DOCKER_REPO.split("/")[-1]
+    sif = f"{image}-{tag}.sif"
+    # Generate a per-tag def file next to the source recipe instead of
+    # rewriting to a fixed /tmp path via sed (racy, clobbers concurrent
+    # builds, and fails when /tmp is not shared with the build).
+    src = Path(deffile)
+    dest = src.parent / f"gildas-{tag}.def"
+    # Fallback: source recipe lives in cwd; keep generated file in cwd too.
+    if src.exists():
+        try:
+            text = src.read_text()
+            new_from = f"From: {DOCKER_REPO}:{tag}"
+            text, n = re.subn(r"^From:.*$", new_from, text, count=1, flags=re.MULTILINE)
+            if not n:
+                raise ValueError(f"No 'From:' line in {deffile}")
+            dest.write_text(text)
+        except Exception as exc:
+            logger.warning("Could not generate %s: %s", dest, exc)
+            # Fail-open to direct docker:// build so singularity stays usable.
+            return f"singularity build {sif} docker://{DOCKER_REPO}:{tag}"
+        return f"singularity build {sif} {shlex.quote(dest.as_posix())}"
+    return f"singularity build {sif} docker://{DOCKER_REPO}:{tag}"
+
+
+def _format_comment(cmd: BuildCommand) -> str:
+    tag = _image_tag(cmd)
+    tail = "launch :" if cmd.section == SECTION_WITH_PIIC and not cmd.in_dockerhub else ":"
+    if cmd.in_dockerhub:
+        base = f"# * {tag} already in dockerhub"
+        return f"{base} but IMAGER outdated, rebuilding :" if cmd.stale_imager else f"{base} {tail}"
+    return f"# * {tag} not in dockerhub{' launch :' if cmd.section == SECTION_WITH_PIIC else ''}"
 
 
 def _format_natif_comment(cmd: NatifCommand) -> str:
-    """Return a human-readable comment line for a native build command."""
-
-    tag = _natif_tag(cmd)
-    extra = " (+piic bundled)" if cmd.has_piic else " (no piic upstream)"
-    return f"# * {tag}{extra} [imager {cmd.imager_version}]"
-
-
-def _image_tag(cmd: BuildCommand) -> str:
-    """Return the Docker Hub tag implied by a build command."""
-
-    suffix = "-alpine" if cmd.alpine else "-debian"
-    if cmd.section == SECTION_WITHOUT_PIIC:
-        return f"{cmd.release}{suffix}"
-    if cmd.section == SECTION_WITH_PIIC:
-        return f"{cmd.release}-piic{suffix}"
-    return cmd.release
-
-
-def singularity_command(cmd: BuildCommand) -> str:
-    """Return a `singularity build` command pulling the Docker Hub image."""
-
-    tag = _image_tag(cmd)
-    image = DOCKER_REPO.split("/")[-1]
-    return f"singularity build {image}-{tag}.sif docker://{DOCKER_REPO}:{tag}"
-
-
-def _render_command(cmd: BuildCommand, singularity: bool) -> str:
-    """Return the printable/runnable command for a build entry."""
-
-    return singularity_command(cmd) if singularity else cmd.command
+    return f"# * {_natif_tag(cmd)}{' (+piic bundled)' if cmd.has_piic else ' (no piic upstream)'} [imager {cmd.imager_version}]"
 
 
 def _run_logged(command: str, log_path: str | None = None, tail: int = 15) -> None:
-    """Run a shell command, optionally teeing output to a log file.
-
-    With ``log_path``, full output goes to the file (created with parents)
-    and only the last ``tail`` lines are printed, keeping CI logs under
-    their size limits. Failures raise after printing the tail.
-    """
+    """Run shell cmd; with log_path tee to file and print tail only."""
     if log_path is None:
         subprocess.run(command, shell=True, check=True)
         return
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as handle:
-        proc = subprocess.run(command, shell=True, stdout=handle, stderr=subprocess.STDOUT)
+    with open(path, "w") as h:
+        proc = subprocess.run(command, shell=True, stdout=h, stderr=subprocess.STDOUT)
     print(f"# log: {path}")
-    for line in path.read_text(errors="replace").splitlines()[-tail:]:
-        print(line)
-    if proc.returncode != 0:
+    print("\n".join(path.read_text(errors="replace").splitlines()[-tail:]))
+    if proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, command)
 
 
-def _print_command_sections(
-    commands: List[BuildCommand],
-    singularity: bool,
-    execute: bool,
-    piic_only: bool,
-    log_dir: str | None = None,
-) -> None:
-    """Print Without/With-piic sections, skipping empty ones (honors --piic)."""
-    sections = ((SECTION_WITHOUT_PIIC, "# Without piic"), (SECTION_WITH_PIIC, "# With piic"))
-    if piic_only:
-        sections = sections[1:]
-    for section, title in sections:
-        section_cmds = sorted(
-            [c for c in commands if c.section == section],
-            key=lambda c: _release_sort_key(c.release),
-        )
-        if not section_cmds:
+def _emit(texts, execute, log_for):
+    for text, cmd, obj in texts:
+        print(text)
+        print(cmd)
+        if execute:
+            _run_logged(cmd, log_for(obj) if log_for else None)
+
+
+def _print_command_sections(commands, singularity, execute, piic_only, log_dir=None) -> None:
+    for section, title in [(SECTION_WITHOUT_PIIC, "# Without piic"), (SECTION_WITH_PIIC, "# With piic")]:
+        if piic_only and section == SECTION_WITHOUT_PIIC:
+            continue
+        sel = sorted([c for c in commands if c.section == section], key=lambda c: _release_sort_key(c.release))
+        if not sel:
             continue
         print(title)
-        for cmd in section_cmds:
-            print(_format_comment(cmd))
-            rendered = _render_command(cmd, singularity)
-            print(rendered)
-            if execute:
-                log = str(Path(log_dir) / f"{_image_tag(cmd)}.log") if log_dir else None
-                _run_logged(rendered, log)
+        _emit([(_format_comment(c), singularity_command(c) if singularity else c.command, c) for c in sel],
+              execute, (lambda c: str(Path(log_dir) / f"{_image_tag(c)}.log")) if log_dir else (lambda c: None) if execute else None)
 
 
-def _format_comment(cmd: BuildCommand) -> str:
-    """Return a human-readable comment line for a build command."""
+def print_natif_build_commands(dockerfile="Dockerfile.alpine", execute=False, include_archive=False, imager_version=None, piic_only=False, archive_gildas=False, log_dir=None) -> None:
+    """Print (or execute) native singularity build commands.
 
-    tag = _image_tag(cmd)
-
-    if cmd.section == SECTION_WITHOUT_PIIC:
-        if cmd.stale_imager and cmd.in_dockerhub:
-            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
-        if cmd.in_dockerhub:
-            return f"# * {tag} already in dockerhub :"
-        return f"# * {tag} not in dockerhub"
-
-    if cmd.section == SECTION_WITH_PIIC:
-        if cmd.stale_imager and cmd.in_dockerhub:
-            return f"# * {tag} already in dockerhub but IMAGER outdated, rebuilding :"
-        if cmd.in_dockerhub:
-            return f"# * {tag} already in dockerhub :"
-        return f"# * {tag} not in dockerhub launch :"
-
-    return f"# * {cmd.release}"
-
-
-def _natif_tag(cmd: NatifCommand) -> str:
-    """SIF tag implied by a native build command (mirrors its comment)."""
-    return f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
-
-
-def print_natif_build_commands(
-    dockerfile: str = "Dockerfile.alpine",
-    execute: bool = False,
-    include_archive: bool = False,
-    imager_version: str | None = None,
-    piic_only: bool = False,
-    archive_gildas: bool = False,
-    log_dir: str | None = None,
-) -> None:
-    """Print (or execute) native `singularity build ... .def` commands."""
-
-    commands = get_natif_commands(
-        dockerfile=dockerfile,
-        include_archive=include_archive,
-        archive_gildas=archive_gildas,
-        imager_version=imager_version,
-    )
-    if piic_only:
-        commands = [c for c in commands if c.has_piic]
-
-    print("# Natif (from tarballs, PIIC bundled when available)")
-    for cmd in commands:
-        print(_format_natif_comment(cmd))
-        print(cmd.command)
-        if execute:
-            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
-            _run_logged(cmd.command, log)
-
-
-def print_missing_build_commands(
-    force: bool = False,
-    dockerfile: str = "Dockerfile.alpine",
-    execute: bool = False,
-    include_archive: bool = False,
-    singularity: bool = False,
-    natif: bool = False,
-    imager_version: str | None = None,
-    piic_only: bool = False,
-    archive_gildas: bool = False,
-    log_dir: str | None = None,
-) -> None:
-    """Print (or execute) docker commands for missing releases.
-
-    With ``singularity=True``, emit ``singularity build ... docker://...``
-    commands instead. Singularity images pull from Docker Hub, so all
-    known releases are listed (``missing_only`` is ignored).
-
-    With ``natif=True``, emit native ``singularity build ... .def``
-    commands (one per release, PIIC bundled when available) instead.
-
-    With ``piic_only=True``, only emit PIIC commands (native: only
-    releases with a PIIC tarball upstream).
-
-    ``imager_version`` overrides the coupled IMAGER version (auto-mapped
-    from each release when not given).
+    Parameters
+    ----------
+    dockerfile : str, optional
+        Dockerfile variant.
+    execute : bool, optional
+        Run commands instead of printing.
+    include_archive, archive_gildas : bool, optional
+        Consider archived releases.
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+    piic_only : bool, optional
+        Only releases with PIIC.
+    log_dir : str or None, optional
+        Tee outputs to ``<dir>/<tag>.log`` when executing.
     """
+    cmds = get_natif_commands(dockerfile, include_archive, archive_gildas, None, imager_version)
+    if piic_only:
+        cmds = [c for c in cmds if c.has_piic]
+    print("# Natif (from tarballs, PIIC bundled when available)")
+    _emit([(_format_natif_comment(c), c.command, c) for c in cmds], execute,
+          (lambda c: str(Path(log_dir) / f"{_natif_tag(c)}.log")) if log_dir else (lambda c: None) if execute else None)
 
+
+def print_missing_build_commands(force=False, dockerfile="Dockerfile.alpine", execute=False, include_archive=False, singularity=False, natif=False, imager_version=None, piic_only=False, archive_gildas=False, log_dir=None) -> None:
+    """Print (or execute) commands for missing releases.
+
+    Parameters
+    ----------
+    force : bool, optional
+        Include releases already on Hub.
+    dockerfile : str, optional
+        Dockerfile variant.
+    execute : bool, optional
+        Run commands instead of printing.
+    include_archive, archive_gildas : bool, optional
+        Consider archived releases.
+    singularity : bool, optional
+        Emit SIF builds via ``gildas-latest.def``.
+    natif : bool, optional
+        Emit native SIF builds.
+    imager_version : str or None, optional
+        Pinned IMAGER version.
+    piic_only : bool, optional
+        Only PIIC variants.
+    log_dir : str or None, optional
+        Tee outputs to ``<dir>/<tag>.log`` when executing.
+    """
     if natif:
-        print_natif_build_commands(
-            dockerfile=dockerfile,
-            execute=execute,
-            include_archive=include_archive,
-            imager_version=imager_version,
-            piic_only=piic_only,
-            archive_gildas=archive_gildas,
-            log_dir=log_dir,
-        )
-        return
-
-    commands = get_build_commands(
-        missing_only=not force and not singularity,
-        dockerfile=dockerfile,
-        include_archive=include_archive,
-        archive_gildas=archive_gildas,
-        imager_version=imager_version,
-    )
-
-    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
+        return print_natif_build_commands(dockerfile, execute, include_archive, imager_version, piic_only, archive_gildas, log_dir)
+    _print_command_sections(get_build_commands(not force and not singularity, dockerfile, None, include_archive, archive_gildas, imager_version), singularity, execute, piic_only, log_dir)
 
 
 @click.command()
-@click.option(
-    "--release",
-    "release_name",
-    default=None,
-    help="Specific GILDAS release (e.g. jan26a). If omitted, print commands for all missing releases.",
-)
-@click.option(
-    "-v",
-    "--verbose",
-    count=True,
-    help="Increase verbosity (-v info, -vv debug).",
-)
-@click.option(
-    "-f",
-    "--force",
-    is_flag=True,
-    help="Include releases already present on Docker Hub when listing all.",
-)
-@click.option(
-    "--debian",
-    is_flag=True,
-    help="Use the Debian-based Dockerfile (default is Alpine/Dockerfile.alpine).",
-)
-@click.option(
-    "--piic",
-    "piic_only",
-    is_flag=True,
-    help="Only emit PIIC build commands. Pairs main-tree PIIC releases with GILDAS from main or archive (add --archive to also search PIIC in the archives).",
-)
-@click.option(
-    "--archive",
-    "include_archive",
-    is_flag=True,
-    default=False,
-    help="Also include archived releases (slower: queries the archive trees).",
-)
-@click.option(
-    "--singularity",
-    "singularity",
-    is_flag=True,
-    default=False,
-    help="Emit 'singularity build ... docker://...' commands instead of docker build/push.",
-)
-@click.option(
-    "--natif",
-    "natif",
-    is_flag=True,
-    default=False,
-    help="Emit native 'singularity build ... .def' commands (from tarballs, PIIC bundled when available).",
-)
-@click.option(
-    "--imager-version",
-    "imager_version",
-    default=None,
-    help="Pin the coupled IMAGER version (default: auto-mapped from the release, e.g. oct26a -> oct26, fallback 'last').",
-)
-@click.option(
-    "--execute",
-    is_flag=True,
-    help="Run the generated docker build/push commands instead of only printing them.",
-)
-@click.option(
-    "--log-dir",
-    "log_dir",
-    default=None,
-    help="With --execute, tee each command's output to <dir>/<tag>.log and print only the tail (keeps CI logs under their size limits).",
-)
-def main(
-    release_name: str | None = None,
-    verbose: int = 0,
-    force: bool = False,
-    debian: bool = False,
-    piic_only: bool = False,
-    execute: bool = False,
-    log_dir: str | None = None,
-    include_archive: bool = False,
-    singularity: bool = False,
-    natif: bool = False,
-    imager_version: str | None = None,
-) -> None:
-    """Print (or run) docker build/push commands for GILDAS releases.
+@click.option("--release", "release_name", default=None, help="Specific release (e.g. jan26a). Omit for all missing.")
+@click.option("-v", "--verbose", count=True, help="Verbosity (-v/-vv).")
+@click.option("-f", "--force", is_flag=True, help="Include releases already on Hub.")
+@click.option("--debian", is_flag=True, help="Debian Dockerfile (default Alpine).")
+@click.option("--piic", "piic_only", is_flag=True, help="Only PIIC commands.")
+@click.option("--archive", "include_archive", is_flag=True, default=False, help="Include archived releases.")
+@click.option("--singularity", "singularity", is_flag=True, default=False, help="Emit singularity builds via gildas-latest.def (From: rewritten per tag).")
+@click.option("--natif", "natif", is_flag=True, default=False, help="Emit native singularity builds (.def from tarballs).")
+@click.option("--imager-version", "imager_version", default=None, help="Pin IMAGER version (default auto-mapped).")
+@click.option("--execute", is_flag=True, help="Run commands instead of printing.")
+@click.option("--log-dir", "log_dir", default=None, help="With --execute, tee output to <dir>/<tag>.log.")
+def main(release_name=None, verbose=0, force=False, debian=False, piic_only=False, execute=False, log_dir=None, include_archive=False, singularity=False, natif=False, imager_version=None) -> None:
+    """Print (or run) docker/singularity build commands for GILDAS releases.
 
-    With --singularity, print `singularity build ... docker://...`
-    commands instead. With --natif, print native
-    `singularity build ... .def` commands instead. The coupled IMAGER
-    version is auto-mapped from each release unless --imager-version
-    overrides it.
+    Parameters
+    ----------
+    release_name : str or None, optional
+        Single release, or None for all missing.
+    verbose : int, optional
+        Verbosity counter.
+    force, debian, piic_only, execute : bool, optional
+        CLI flags (see ``--help``).
+    log_dir : str or None, optional
+        Log directory with ``--execute``.
+    include_archive, singularity, natif : bool, optional
+        CLI flags (see ``--help``).
+    imager_version : str or None, optional
+        Pinned IMAGER version.
     """
-
-    # Configure logging
-    level = logging.WARNING
-    if verbose == 1:
-        level = logging.INFO
-    elif verbose >= 2:
-        level = logging.DEBUG
-    logging.basicConfig(level=level, format="%(levelname)s:%(name)s:%(message)s")
-
+    logging.basicConfig(level=[logging.WARNING, logging.INFO, logging.DEBUG][min(verbose, 2)], format="%(levelname)s:%(name)s:%(message)s")
     dockerfile = "Dockerfile" if debian else "Dockerfile.alpine"
-
-    # PIIC releases lag behind GILDAS ones, so pairing a main-tree PIIC
-    # with its GILDAS tarball usually requires the GILDAS archive.
     archive_gildas = include_archive or piic_only
-
     if not release_name:
-        print_missing_build_commands(
-            force=force,
-            dockerfile=dockerfile,
-            execute=execute,
-            include_archive=include_archive,
-            singularity=singularity,
-            natif=natif,
-            imager_version=imager_version,
-            piic_only=piic_only,
-            archive_gildas=archive_gildas,
-            log_dir=log_dir,
-        )
-        return
-
-    # Single release mode always tags latest.
+        return print_missing_build_commands(force, dockerfile, execute, include_archive, singularity, natif, imager_version, piic_only, archive_gildas, log_dir)
     sets = _load_release_sets(include_archive, archive_gildas)
-    all_known = set(sets.gildas) | set(sets.archived_gildas) | set(sets.piic) | set(sets.archived_piic)
-    if release_name not in all_known:
-        hint = "" if include_archive else " (retry with --archive for archived releases)"
-        logger.warning("Release '%s' not found upstream%s; emitting nothing", release_name, hint)
-
+    if release_name not in set(sets.gildas) | set(sets.archived_gildas) | set(sets.piic) | set(sets.archived_piic):
+        logger.warning("Release '%s' not found upstream%s; emitting nothing", release_name, "" if include_archive else " (retry with --archive)")
     if natif:
-        cmd = natif_command(release_name, sets, dockerfile=dockerfile, imager_version=imager_version)
-        if piic_only and (cmd is None or not cmd.has_piic):
-            return
-        if cmd is None:
+        c = natif_command(release_name, sets, dockerfile, imager_version)
+        if c is None or (piic_only and not c.has_piic):
             return
         print("# Natif (from tarballs, PIIC bundled when available)")
-        print(_format_natif_comment(cmd))
-        print(cmd.command)
-        if execute:
-            log = str(Path(log_dir) / f"{_natif_tag(cmd)}.log") if log_dir else None
-            _run_logged(cmd.command, log)
-        return
-
-    commands = get_release_build_commands(
-        release_name,
-        dockerfile=dockerfile,
-        tag_latest=True,
-        sets=sets,
-        include_archive=include_archive,
-        archive_gildas=archive_gildas,
-        imager_version=imager_version,
-    )
-
-    _print_command_sections(commands, singularity, execute, piic_only, log_dir)
+        return _emit([(_format_natif_comment(c), c.command, c)], execute, (lambda o: str(Path(log_dir) / f"{_natif_tag(o)}.log")) if log_dir and execute else None)
+    _print_command_sections(get_release_build_commands(release_name, False, dockerfile, True, sets, True, include_archive, archive_gildas, imager_version), singularity, execute, piic_only, log_dir)
 
 
 if __name__ == "__main__":

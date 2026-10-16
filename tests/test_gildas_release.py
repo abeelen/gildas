@@ -184,7 +184,10 @@ def test_natif_commands_follow_loaded_sets():
 
 def test_singularity_command():
     cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)
-    assert singularity_command(cmd) == "singularity build gildas-jul26a-piic-alpine.sif docker://abeelen/gildas:jul26a-piic-alpine"
+    assert singularity_command(cmd) == (
+        'sed "s|^From: .*|From: abeelen/gildas:jul26a-piic-alpine|" gildas-latest.def > /tmp/sif-build.def'
+        " && singularity build gildas-jul26a-piic-alpine.sif /tmp/sif-build.def"
+    )
 
 
 def test_print_missing_piic_only(monkeypatch, capsys):

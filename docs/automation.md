@@ -38,8 +38,8 @@ releases lag behind GILDAS ones — see `--piic`).
 # always tagging `latest`.
 ./gildas_release.py --release jan26a
 
-# Singularity: emit `singularity build ... docker://...` commands
-# (lists all known releases, since SIFs pull from Docker Hub)
+# Singularity: emit `singularity build ... gildas-latest.def` commands
+# (From: rewritten per tag, lists all known releases)
 ./gildas_release.py --singularity
 ./gildas_release.py --singularity --debian
 ./gildas_release.py --release jan26a --singularity
