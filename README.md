@@ -449,15 +449,15 @@ still missing. Native assets accumulate per release name on the same
 rolling release; the `.def` files remain the manual path for anything
 custom.
 
-On GitLab, converted SIFs are pushed as OCI artifacts to the project
-container registry (`<registry>/<project>/sif:<tag>`, same job
-credentials as the Docker push, nothing to configure): manual runs take
-an optional `SIF_TAGS` variable, schedules refresh weekly. Pull with
-`singularity pull oras://<registry>/<project>/sif:<tag>` (browse exact
-paths under Deploy > Container Registry). The SIF layer type is
-pinned to `application/vnd.sylabs.sif.layer.v1.sif` — plain `oras push`
-defaults to a type Singularity refuses. Native `.def` builds stay on
-GitHub, where runners have root.
+On GitLab, converted SIFs are pushed to the project container registry
+(`<registry>/<project>/sif:<tag>`) with `singularity push` over ORAS,
+authenticated with the same job credentials as the Docker push (a plain
+`oras push` stamps an artifact type this registry rejects, so the
+Singularity-native push is required). Pull with
+`singularity pull oras://<registry>/<project>/sif:<tag>` (exact paths
+under Deploy > Container Registry). Manual runs take an optional
+`SIF_TAGS` variable, schedules refresh weekly. Native `.def` builds stay
+on GitHub, where runners have root.
 
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):

@@ -81,17 +81,15 @@ build:
     when: always
 
 sif:
-  # Convert Hub tags to SIFs and push them as OCI artifacts to the project
-  # container registry ($CI_REGISTRY_IMAGE/sif:<tag>), pullable with
+  # Convert Hub tags to SIFs and push them to the project container
+  # registry ($CI_REGISTRY_IMAGE/sif:<tag>), pullable with
   # `singularity pull oras://<registry>/<project>/sif:<tag>`.
-  # The SIF layer type matters: plain `oras push` stores
-  # application/vnd.oci.image.layer.v1.tar, which Singularity refuses;
-  # application/vnd.sylabs.sif.layer.v1.sif round-trips (verified
-  # locally against a throwaway registry). Auth reuses the same
-  # CI_REGISTRY_* job credentials as the docker push. Native .def builds
-  # stay on GitHub, where runners have root. Manual runs take SIF_TAGS
-  # (default: latest + latest-piic); schedules always refresh (a weekly
-  # pull-convert-push costs a few minutes).
+  # Pushed with `singularity push` (not oras: plain `oras push` stamps
+  # artifactType vnd.unknown.artifact.v1, which this registry rejects),
+  # authenticated with the same CI_REGISTRY_* job credentials as the
+  # docker push. Native .def builds stay on GitHub, where runners have
+  # root. Manual runs take SIF_TAGS (default: latest + latest-piic);
+  # schedules always refresh (a weekly pull-convert-push costs minutes).
   stage: publish
   image: ubuntu:24.04
   timeout: 3h
@@ -104,18 +102,15 @@ sif:
   before_script:
     - apt-get update -qq && apt-get install -y -qq singularity-container squashfs-tools ca-certificates curl
     - singularity version
-    - curl -fSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz -o /tmp/oras.tgz
-    - tar xzf /tmp/oras.tgz -C /usr/local/bin oras
-    - oras version
   script:
     - |
       TAGS="${SIF_TAGS:-latest latest-piic}"
-      echo "$CI_REGISTRY_PASSWORD" | oras login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+      echo "$CI_REGISTRY_PASSWORD" | singularity remote login -u "$CI_REGISTRY_USER" --password-stdin oras://"$CI_REGISTRY"
       for tag in $TAGS; do
         sif="gildas-$tag.sif"
         rm -f "$sif"
         if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
-          oras push "$CI_REGISTRY_IMAGE/sif:$tag" "$sif:application/vnd.sylabs.sif.layer.v1.sif"
+          singularity push -U "$sif" oras://"$CI_REGISTRY_IMAGE/sif:$tag"
         else
           echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
         fi
