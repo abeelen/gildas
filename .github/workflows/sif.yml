@@ -1,10 +1,15 @@
 # Convert Docker Hub tags to Singularity SIFs and attach them to the
-# rolling `sif-images` GitHub release.
+# rolling `sif-images` GitHub release, plus optionally build one native
+# SIF from the tarballs (full recompile, needs root).
 #
 # Manual dispatch converts the given tags (default: latest + latest-piic);
 # the weekly schedule rebuilds a tag only when its Hub push is newer than
 # the published asset (fail-open: any check failure rebuilds). Missing Hub
 # tags are skipped with a warning instead of failing the job.
+#
+# Set the `natif` input to build a native SIF instead (newest release by
+# default, Alpine unless `debian` is set; `release` pins one explicitly).
+# Native assets accumulate per release name on the same rolling release.
 #
 # Uses eWaterCycle/setup-singularity with its default version; pin
 # `singularity-version` explicitly if a runner image ever breaks it.
@@ -15,9 +20,23 @@ on:
   workflow_dispatch:
     inputs:
       tags:
-        description: "Hub tags to convert (space-separated)"
+        description: "Hub tags to convert (space-separated, ignored with natif)"
         required: false
         default: "latest latest-piic"
+      natif:
+        description: "Build a native SIF from tarballs instead of converting"
+        required: false
+        default: false
+        type: boolean
+      release:
+        description: "GILDAS release for the native build (empty = newest)"
+        required: false
+        default: ""
+      debian:
+        description: "Native build from the Debian .def (default is Alpine)"
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "0 4 * * 5"
 
@@ -26,6 +45,7 @@ permissions:
 
 jobs:
   sif:
+    if: github.event_name != 'workflow_dispatch' || inputs.natif != true
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -57,3 +77,49 @@ jobs:
             fi
             rm -f "$sif"
           done
+
+  natif:
+    if: github.event_name == 'workflow_dispatch' && inputs.natif == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: eWaterCycle/setup-singularity@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install click requests beautifulsoup4
+      - name: Resolve release and definition file
+        id: sel
+        run: |
+          DOCKERFILE="Dockerfile.alpine"
+          [ "${{ inputs.debian }}" = "true" ] && DOCKERFILE="Dockerfile"
+          SEL=$(NATIV_DOCKERFILE="$DOCKERFILE" NATIV_RELEASE="${{ inputs.release }}" python3 -c "
+          import os
+          from gildas_release import get_natif_commands, _release_sort_key, _load_release_sets
+          sets = _load_release_sets()
+          cmds = get_natif_commands(sets=sets, dockerfile=os.environ['NATIV_DOCKERFILE'])
+          rel = os.environ.get('NATIV_RELEASE', '').strip()
+          pick = next((c for c in cmds if c.release == rel), None) if rel else None
+          if rel and pick is None:
+              sets = _load_release_sets(include_archive=True)
+              cmds = get_natif_commands(sets=sets, dockerfile=os.environ['NATIV_DOCKERFILE'])
+              pick = next((c for c in cmds if c.release == rel), None)
+          if rel and pick is None:
+              raise SystemExit(f\"release '{rel}' not buildable natively\")
+          pick = pick or sorted(cmds, key=lambda c: _release_sort_key(c.release))[-1]
+          print(pick.command)
+          ")
+          echo "command=$SEL" >> "$GITHUB_OUTPUT"
+      - name: Build native SIF (needs root) and upload to the rolling release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Running: ${{ steps.sel.outputs.command }}"
+          sudo -E bash -c '${{ steps.sel.outputs.command }}'
+          sif=$(echo '${{ steps.sel.outputs.command }}' | grep -oE 'gildas-[^ ]+\.sif')
+          gh release view sif-images >/dev/null 2>&1 || \
+            gh release create sif-images --title "Singularity images (rolling)" \
+              --notes "SIF images converted from Docker Hub tags. Rebuilt when the tags move."
+          gh release upload sif-images "$sif" --clobber
+          rm -f "$sif"

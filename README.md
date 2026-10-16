@@ -422,6 +422,13 @@ tag only when its Hub push is newer than the published asset. Run it
 manually after pushing rebuilt tags; the Friday schedule then just
 keeps them fresh.
 
+The same workflow builds one native SIF from the tarballs on demand
+(manual dispatch with the `natif` input: newest release by default,
+Alpine unless `debian` is set, `release` pins one explicitly, archived
+releases included automatically). Native assets accumulate per release
+name on the same rolling release; the `.def` files remain the manual
+path for anything custom.
+
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):
 weekly schedules are created in the GitLab UI (Build > Pipeline
