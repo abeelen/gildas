@@ -6,16 +6,19 @@ With Docker 17.05 or higher (BuildKit recommended for cache mounts and
 ```bash
 export release=jan26a
 docker build \
-       --tag abeelen/gildas:${release} \
+       --tag abeelen/gildas:${release}-alpine \
        --target gildas \
        --build-arg release=${release} \
        --build-arg MAKE_JOBS=$(nproc) \
        -f Dockerfile.alpine .
-# Only add --tag abeelen/gildas:latest for the newest release.
+# Only add --tag abeelen/gildas:latest-alpine (and the latest alias)
+# for the newest release.
 ```
 
-Alpine (`Dockerfile.alpine`) is the default; append `-debian` to the
-tags and use `-f Dockerfile` for the opt-in Debian-based images.
+Alpine (`Dockerfile.alpine`) is the default build; every tag carries its
+base (`-alpine` / `-debian`, e.g. `${release}-alpine`), with unsuffixed
+`latest` / `latest-piic` kept as aliases of the Alpine rolling tags.
+Use `-f Dockerfile` for the opt-in Debian-based images.
 `Dockerfile`s for this project are available at
 https://github.com/abeelen/gildas.git
 
@@ -56,11 +59,12 @@ warn instead of silently producing a GILDAS-only image thanks to the
 ```bash
 export release=jan26a
 docker build \
-       --tag abeelen/gildas:${release}-piic \
+       --tag abeelen/gildas:${release}-piic-alpine \
        --target gildas-piic \
        --build-arg release=${release} \
        -f Dockerfile.alpine .
-# Only add --tag abeelen/gildas:latest-piic for the newest release.
+# Only add --tag abeelen/gildas:latest-piic-alpine (and the latest-piic
+# alias) for the newest release.
 ```
 
 PIIC releases often lag behind GILDAS ones (same release name), so the
@@ -102,7 +106,7 @@ curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags'
 
 | Method | Command | Pros | Cons |
 |--------|---------|------|------|
-| From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
+| From Docker Hub | `singularity build gildas-jan26a-alpine.sif docker://abeelen/gildas:jan26a-alpine` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
 | Native (`gildas-natif.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
 | Native Alpine (`gildas-natif-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
 

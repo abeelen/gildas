@@ -77,7 +77,7 @@ jobs:
         include:
           - family: alpine
             script_args: ""
-            cache_tags: "latest latest-piic"
+            cache_tags: "latest-alpine latest-piic-alpine"
           - family: debian
             script_args: "--debian"
             cache_tags: "latest-debian latest-piic-debian"

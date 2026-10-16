@@ -6,7 +6,9 @@
   self-contained `/usr/local/bin` wrappers: every program runs by bare
   name, no `gag*` env switching (entrypoint/runscripts just source the
   default env and exec)
-- Alpine default base image (`-debian` opt-in tags); `--piic` mode
+- Every tag names its base (`-alpine` / `-debian` opt-in); unsuffixed
+  `latest` / `latest-piic` are aliases of the Alpine rolling tags;
+  `--piic` mode
   pairing main-tree PIIC with GILDAS from main or archive
 - Self-describing images (`abeelen.gildas.*` labels,
   `/etc/imager-version` / `/etc/piic-version`) and IMAGER-drift

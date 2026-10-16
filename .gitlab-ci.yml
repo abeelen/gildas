@@ -37,10 +37,7 @@ build:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
-    # TEMPORARY: builds disabled while debugging (revert to plain
-    # `- if: $CI_COMMIT_BRANCH == "master"` to restore).
     - if: $CI_COMMIT_BRANCH == "master"
-      when: never
   before_script:
     - apk add --no-cache python3 py3-pip
     - pip install -q --break-system-packages click requests beautifulsoup4
@@ -53,7 +50,7 @@ build:
     - if [ -n "$RELEASE" ]; then ARGS="$ARGS --release $RELEASE"; fi
     - if [ "$PIIC" = "1" ]; then ARGS="$ARGS --piic"; fi
     - if [ "$ARCHIVE" = "1" ]; then ARGS="$ARGS --archive"; fi
-    - CACHE_TAGS="latest latest-piic"
+    - CACHE_TAGS="latest-alpine latest-piic-alpine"
     - if [ "$FAMILY" = "debian" ]; then CACHE_TAGS="latest-debian latest-piic-debian"; fi
     - for tag in $CACHE_TAGS; do docker pull -q abeelen/gildas:"$tag" || true; done
     # shellcheck disable=SC2086

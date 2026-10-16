@@ -38,15 +38,15 @@ def make_sets(**overrides):
 
 
 def test_tag_suffix():
-    assert _tag_suffix("Dockerfile.alpine") == ""
+    assert _tag_suffix("Dockerfile.alpine") == "-alpine"
     assert _tag_suffix("Dockerfile") == "-debian"
     assert _tag_suffix("Dockerfile.custom") == "-debian"
 
 
 def test_image_tag():
-    assert _image_tag(BuildCommand(SECTION_WITHOUT_PIIC, "oct26a", False, "x", True)) == "oct26a"
+    assert _image_tag(BuildCommand(SECTION_WITHOUT_PIIC, "oct26a", False, "x", True)) == "oct26a-alpine"
     assert _image_tag(BuildCommand(SECTION_WITHOUT_PIIC, "oct26a", False, "x", False)) == "oct26a-debian"
-    assert _image_tag(BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)) == "jul26a-piic"
+    assert _image_tag(BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)) == "jul26a-piic-alpine"
     assert _image_tag(BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", False)) == "jul26a-piic-debian"
 
 
@@ -58,11 +58,23 @@ def test_imager_version_mapping():
 
 def test_build_without_piic_alpine_is_default():
     cmd = build_without_piic_command(["oct26a"], [], "oct26a", imager_version="oct26")
-    assert "--tag abeelen/gildas:oct26a " in cmd
+    assert "--tag abeelen/gildas:oct26a-alpine " in cmd
     assert "-f Dockerfile.alpine ." in cmd
     assert "--target gildas" in cmd
     assert "--build-arg IMAGER_VERSION=oct26" in cmd
     assert "latest" not in cmd
+
+
+def test_build_without_piic_latest_alias():
+    cmd = build_without_piic_command(
+        ["oct26a"], [], "oct26a", tag_latest=True, imager_version="oct26"
+    )
+    assert "--tag abeelen/gildas:oct26a-alpine" in cmd
+    assert "--tag abeelen/gildas:latest-alpine" in cmd
+    # Unsuffixed latest is an alias of the Alpine image.
+    assert "--tag abeelen/gildas:latest " in cmd or cmd.rstrip().endswith("abeelen/gildas:latest")
+    assert "docker push abeelen/gildas:latest-alpine" in cmd
+    assert "docker push abeelen/gildas:latest" in cmd
 
 
 def test_build_without_piic_latest_and_debian():
@@ -89,7 +101,7 @@ def test_build_with_piic_needs_both_tarballs():
     cmd = build_with_piic_command(
         ["oct26a"], ["jul26a"], ["jul26a"], [], "jul26a", imager_version="jul26"
     )
-    assert "--tag abeelen/gildas:jul26a-piic " in cmd
+    assert "--tag abeelen/gildas:jul26a-piic-alpine " in cmd
     assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd
     assert "PIIC_URL" not in cmd
 
@@ -113,7 +125,7 @@ def test_archived_gildas_ignored_without_flag():
 def test_missing_only_hides_present_tags(monkeypatch):
     import gildas_release as gr
 
-    sets = make_sets(tags=["oct26a"])
+    sets = make_sets(tags=["oct26a-alpine"])
     monkeypatch.setattr(
         gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "oct26"}
     )
@@ -172,7 +184,7 @@ def test_natif_commands_follow_loaded_sets():
 
 def test_singularity_command():
     cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)
-    assert singularity_command(cmd) == "singularity build gildas-jul26a-piic.sif docker://abeelen/gildas:jul26a-piic"
+    assert singularity_command(cmd) == "singularity build gildas-jul26a-piic-alpine.sif docker://abeelen/gildas:jul26a-piic-alpine"
 
 
 def test_print_missing_piic_only(monkeypatch, capsys):
@@ -256,7 +268,7 @@ def test_imager_stale_matrix(monkeypatch):
 def test_stale_imager_rebuilds_present_tag(monkeypatch):
     import gildas_release as gr
 
-    sets = make_sets(tags=["oct26a"])
+    sets = make_sets(tags=["oct26a-alpine"])
     monkeypatch.setattr(
         gr, "_image_labels", lambda tag: {"abeelen.gildas.imager-version": "oct26"}
     )
@@ -280,7 +292,7 @@ def test_stale_check_only_for_main_releases(monkeypatch):
 
     # Archived release with mocked labels: existence alone decides.
     sets = make_sets(
-        tags=["mar26a", "mar26a-piic"],
+        tags=["mar26a-alpine", "mar26a-piic-alpine"],
         archived_gildas=["mar26a"],
         archived_piic=["mar26a"],
     )
@@ -336,7 +348,7 @@ def test_execute_log_paths(monkeypatch, tmp_path):
     )
     gr._print_command_sections(cmds, False, True, False, str(tmp_path))
     logs = sorted(log for _, log in seen)
-    assert logs == [str(tmp_path / "jul26a-piic.log"), str(tmp_path / "jul26a.log")]
+    assert logs == [str(tmp_path / "jul26a-alpine.log"), str(tmp_path / "jul26a-piic-alpine.log")]
     # Without log_dir: plain execution, log None.
     seen.clear()
     gr._print_command_sections(cmds, False, True, False, None)

@@ -448,26 +448,37 @@ def _docker_build_push(
     middle_args: Sequence[str],
     dockerfile: str,
     tag_latest: bool,
+    alias_latest: str | None = None,
 ) -> str:
-    """Assemble a ``docker build ... && docker push ...`` command string."""
+    """Assemble a ``docker build ... && docker push ...`` command string.
+
+    ``alias_latest`` adds an extra unsuffixed alias tag (``latest`` or
+    ``latest-piic``) pointing at the Alpine image.
+    """
 
     parts = ["docker build", f"--tag {DOCKER_REPO}:{main_tag}"]
     if tag_latest:
         parts.append(f"--tag {DOCKER_REPO}:{latest_tag}")
+    if tag_latest and alias_latest:
+        parts.append(f"--tag {DOCKER_REPO}:{alias_latest}")
     parts += [*middle_args, f"-f {shlex.quote(dockerfile)} ."]
     push = f"docker push {DOCKER_REPO}:{main_tag}"
     if tag_latest:
         push += f" && docker push {DOCKER_REPO}:{latest_tag}"
+    if tag_latest and alias_latest:
+        push += f" && docker push {DOCKER_REPO}:{alias_latest}"
     return f"{_join_parts(parts)} && {push}"
 
 
 def _tag_suffix(dockerfile: str) -> str:
     """Tag suffix for a Dockerfile.
 
-    Alpine is the default base image and uses no suffix; Debian images
-    get a ``-debian`` suffix (e.g. ``jan26a-debian``, ``latest-piic-debian``).
+    Every tag carries its base explicitly: Alpine images get ``-alpine``,
+    Debian images ``-debian`` (e.g. ``oct26a-alpine``,
+    ``latest-piic-debian``). The unsuffixed ``latest``/``latest-piic``
+    tags are aliases of the Alpine ones (see ``_docker_build_push``).
     """
-    return "" if dockerfile.endswith("alpine") else "-debian"
+    return "-alpine" if dockerfile.endswith("alpine") else "-debian"
 
 
 def build_without_piic_command(
@@ -495,6 +506,7 @@ def build_without_piic_command(
     suffix = _tag_suffix(dockerfile)
     main_tag = f"{release}{suffix}"
     latest_tag = f"latest{suffix}"
+    alias = "latest" if dockerfile.endswith("alpine") else None
 
     parts = [
         "--target gildas",
@@ -502,7 +514,7 @@ def build_without_piic_command(
         f"--build-arg release={shlex.quote(release)}",
         f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
     ]
-    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest)
+    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest, alias)
 
 
 def build_with_piic_command(
@@ -552,6 +564,7 @@ def build_with_piic_command(
     suffix = _tag_suffix(dockerfile)
     main_tag = f"{release}-piic{suffix}"
     latest_tag = f"latest-piic{suffix}"
+    alias = "latest-piic" if dockerfile.endswith("alpine") else None
 
     parts = [
         "--target gildas-piic",
@@ -560,7 +573,7 @@ def build_with_piic_command(
         f"--build-arg release={shlex.quote(release)}",
         f"--build-arg IMAGER_VERSION={shlex.quote(imager_version)}",
     ]
-    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest)
+    return _docker_build_push(main_tag, latest_tag, parts, dockerfile, tag_latest, alias)
 
 
 @dataclass
@@ -588,9 +601,11 @@ def get_release_build_commands(
 ) -> List[BuildCommand]:
     """Return docker commands for a specific release.
 
-    ``tag_latest`` controls the ``latest`` tag on the GILDAS image;
-    ``tag_latest_piic`` controls ``latest-piic`` (defaults to the value
-    of ``tag_latest`` when not given). Archived releases are only
+    ``tag_latest`` controls the ``latest-alpine``/``latest-debian`` tag on
+    the GILDAS image (plus the unsuffixed ``latest`` alias for Alpine);
+    ``tag_latest_piic`` controls ``latest-piic-alpine``/``-debian`` (plus
+    the ``latest-piic`` alias, defaults to the value of ``tag_latest``
+    when not given). Archived releases are only
     considered when ``include_archive`` is True. ``imager_version``
     overrides the coupled IMAGER version (auto-mapped from the release
     when not given).
@@ -687,9 +702,11 @@ def get_build_commands(
     """Return docker commands for all known releases (deduplicated).
 
     When ``tag_latest`` is None (the default), the newest GILDAS release
-    gets the ``latest`` tag and the newest GILDAS+PIIC release gets the
-    ``latest-piic`` tag (tracked independently, so a newer GILDAS-only
-    release does not steal ``latest-piic`` from the newest PIIC one).
+    gets the ``latest-alpine``/``latest-debian`` tag (plus the unsuffixed
+    ``latest`` alias for Alpine) and the newest GILDAS+PIIC release gets
+    the ``latest-piic-*`` tag (tracked independently, so a newer
+    GILDAS-only release does not steal ``latest-piic`` from the newest
+    PIIC one).
     Pass True to tag every command with ``latest``, False for none.
     """
 
@@ -821,7 +838,7 @@ def _format_natif_comment(cmd: NatifCommand) -> str:
 def _image_tag(cmd: BuildCommand) -> str:
     """Return the Docker Hub tag implied by a build command."""
 
-    suffix = "" if cmd.alpine else "-debian"
+    suffix = "-alpine" if cmd.alpine else "-debian"
     if cmd.section == SECTION_WITHOUT_PIIC:
         return f"{cmd.release}{suffix}"
     if cmd.section == SECTION_WITH_PIIC:

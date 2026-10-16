@@ -5,7 +5,7 @@ Pre-built images are available on Docker Hub: https://hub.docker.com/r/abeelen/g
 
 You can find many tags corresponding to several release version of the software. Alternatively you can use the `latest` or `latest-piic` tag to use the most up-to-date version of the software on this repository.
 
-There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine is the default base image; Debian-based variants carry an additional `-debian` suffix.
+There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Every tag names its base explicitly (`-alpine` / `-debian`); the unsuffixed `latest` and `latest-piic` are aliases of the Alpine rolling tags.
 
 You can use it either with Docker or simply with Singularity.
 
@@ -87,13 +87,15 @@ mode: pure terminal interaction, no display needed at all —
 
 | Tag example             | Base   | Content       | Notes                         |
 |-------------------------|--------|---------------|-------------------------------|
-| `latest`                | Alpine | GILDAS        | Convenience tag (default)     |
-| `jan26a`                | Alpine | GILDAS        | Specific release              |
-| `latest-piic`           | Alpine | GILDAS + PIIC | Convenience tag with PIIC     |
-| `jan26a-piic`           | Alpine | GILDAS + PIIC | Specific release with PIIC    |
-| `latest-debian`         | Debian | GILDAS        | Opt-in Debian base image      |
+| `latest-alpine`         | Alpine | GILDAS        | Rolling Alpine tag            |
+| `latest`                | Alpine | GILDAS        | Alias of `latest-alpine`      |
+| `jan26a-alpine`         | Alpine | GILDAS        | Specific release              |
+| `latest-piic-alpine`    | Alpine | GILDAS + PIIC | Rolling Alpine tag with PIIC  |
+| `latest-piic`           | Alpine | GILDAS + PIIC | Alias of `latest-piic-alpine` |
+| `jan26a-piic-alpine`    | Alpine | GILDAS + PIIC | Specific release with PIIC    |
+| `latest-debian`         | Debian | GILDAS        | Rolling Debian tag            |
 | `jan26a-debian`         | Debian | GILDAS        | Specific release, Debian      |
-| `latest-piic-debian`    | Debian | GILDAS + PIIC | Opt-in Debian base with PIIC  |
+| `latest-piic-debian`    | Debian | GILDAS + PIIC | Rolling Debian tag with PIIC  |
 | `jan26a-piic-debian`    | Debian | GILDAS + PIIC | Specific release, Debian+PIIC |
 
 ## Using the images
