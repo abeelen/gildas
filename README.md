@@ -5,86 +5,143 @@ Pre-built images are available on Docker Hub: https://hub.docker.com/r/abeelen/g
 
 You can find many tags corresponding to several release version of the software. Alternatively you can use the `latest` or `latest-piic` tag to use the most up-to-date version of the software on this repository.
 
-There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine-based variants are available with an additional `-alpine` suffix.
+There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Alpine is the default base image; Debian-based variants carry an additional `-debian` suffix.
 
 You can use it either with Docker or simply with Singularity.
 
 ## Quick start
 
+Minimal working example (no display needed — `-nw` is no-window mode):
+
 ```bash
-# Singularity, GILDAS without PIIC (latest Debian-based image)
-singularity run docker://abeelen/gildas:latest mapping
-
-# Singularity, GILDAS with PIIC
-singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
-
-# Docker, GILDAS without PIIC
-docker run --rm -it abeelen/gildas:latest mapping
-
-# Docker, GILDAS with PIIC
-docker run --rm -it abeelen/gildas:latest-piic "gagpiic; piic"
+docker run --rm -it abeelen/gildas:latest mapping -nw
 ```
+
+Most GILDAS programs need a display (GTK) for their graphic windows,
+so let the container use yours — once per session on the host:
+
+```bash
+xhost +SI:localuser:$(id -un)
+```
+
+Then every program runs directly by name:
+
+```bash
+# GILDAS programs
+singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest mapping
+
+# Docker: full recipe (X shared memory, cookie/Wayland passthrough,
+# home mounted) — define once, call per program; details below.
+alias gildas_docker='docker run --rm -it \
+       --hostname "gildas" --user $(id -u):$(id -g) \
+       --ipc=host \
+       --workdir="$PWD" \
+       --env HOME="$HOME" --env USER="$USER" \
+       --env DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env XDG_RUNTIME_DIR \
+       --env XAUTHORITY \
+       --volume "/etc/passwd:/etc/passwd:ro" \
+       --volume "$HOME:$HOME" \
+       --volume "/Users/$USER:/Users/$USER" \
+       --volume "$PWD:$PWD" \
+       --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
+       --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
+       abeelen/gildas:latest'
+gildas_docker mapping
+gildas_docker imager
+gildas_docker viewer
+
+# PIIC: same launcher pointed at a *-piic image
+alias gildas_docker='docker run --rm -it \
+       --hostname "gildas" --user $(id -u):$(id -g) \
+       --ipc=host \
+       --workdir="$PWD" \
+       --env HOME="$HOME" --env USER="$USER" \
+       --env DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env WAYLAND_DISPLAY \
+       --env XDG_RUNTIME_DIR \
+       --env XAUTHORITY \
+       --volume "/etc/passwd:/etc/passwd:ro" \
+       --volume "$HOME:$HOME" \
+       --volume "/Users/$USER:/Users/$USER" \
+       --volume "$PWD:$PWD" \
+       --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
+       --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
+       abeelen/gildas:latest-piic'
+singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest-piic piic
+gildas_docker piic
+```
+
+(`DISPLAY` and `~/.Xauthority` pass through into Singularity
+automatically; only the X socket needs an explicit `--bind`. The
+`atk-bridge` message some programs print is harmless noise.)
+
+Programs with graphics (e.g. `mapping`) also take `-nw` for no-window
+mode: pure terminal interaction, no display needed at all —
+`gildas_docker mapping -nw`, `singularity run … mapping -nw`.
 
 ## Docker tags overview
 
 | Tag example             | Base   | Content       | Notes                         |
 |-------------------------|--------|---------------|-------------------------------|
-| `latest`                | Debian | GILDAS        | Convenience tag               |
-| `jan26a`                | Debian | GILDAS        | Specific release              |
-| `latest-piic`           | Debian | GILDAS + PIIC | Convenience tag with PIIC     |
-| `jan26a-piic`           | Debian | GILDAS + PIIC | Specific release with PIIC    |
-| `latest-alpine`         | Alpine | GILDAS        | Alpine base image             |
-| `jan26a-alpine`         | Alpine | GILDAS        | Specific release, Alpine      |
-| `latest-piic-alpine`    | Alpine | GILDAS + PIIC | Alpine base image with PIIC   |
-| `jan26a-piic-alpine`    | Alpine | GILDAS + PIIC | Specific release, Alpine+PIIC |
+| `latest`                | Alpine | GILDAS        | Convenience tag (default)     |
+| `jan26a`                | Alpine | GILDAS        | Specific release              |
+| `latest-piic`           | Alpine | GILDAS + PIIC | Convenience tag with PIIC     |
+| `jan26a-piic`           | Alpine | GILDAS + PIIC | Specific release with PIIC    |
+| `latest-debian`         | Debian | GILDAS        | Opt-in Debian base image      |
+| `jan26a-debian`         | Debian | GILDAS        | Specific release, Debian      |
+| `latest-piic-debian`    | Debian | GILDAS + PIIC | Opt-in Debian base with PIIC  |
+| `jan26a-piic-debian`    | Debian | GILDAS + PIIC | Specific release, Debian+PIIC |
 
 ## Using the images
 
 ### Usage with Singularity
 
-You can simply run any of the gildas application with:
-
 ```bash
-singularity run docker://abeelen/gildas:latest {application}
+# Any program, directly by name (piic needs a *-piic image).
+# The --bind is required: most programs need your X11 display.
+singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest mapping
+singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest-piic piic
+singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest imager
 ```
 
-or, if you want to use piic
+Prebuilt SIFs are published on the
+[sif-images](https://github.com/abeelen/gildas/releases/tag/sif-images)
+GitHub release (and mirrored as GitLab job artifacts via the manual
+`sif-mirror` job, for users without github.com access). To build your
+own, see [building](docs/building.md) — or generate the exact command
+with `./gildas_release.py --singularity` / `--natif`.
+
+Which invocations work depends on how the SIF was built:
+
+| SIF origin | `run <prog>` | `--app <prog>` | bare `exec <prog>` |
+|---|---|---|---|
+| Converted from `docker://` (manual builds) | yes | no (`%apprun` only exists in `.def` builds) | only self-contained wrappers (`imager`, `viewer`) |
+| Built from a `.def` (native images, published artifacts) | yes | yes (see list below) | only self-contained wrappers |
+
 ```bash
-singularity run docker://abeelen/gildas:latest-piic "gagpiic; piic"
-```
-
-You can also build a native Singularity image (SIF) from the Docker
-image or from one of the provided definition files (`gildas-latest.def`
-or `gildas-natif.def`).
-
-```bash
-# Build a SIF directly from the Docker image on Docker Hub
-singularity build gildas-latest.sif docker://abeelen/gildas:latest
-
-# Or, using the Singularity definition file (keeps custom apprun entries)
-singularity build gildas-latest.sif gildas-latest.def
-
-# Native build from tarballs (no Docker involved), with configurable
-# release and URLs (see %environment in gildas-natif.def)
-export GILDAS_RELEASE=jan26a
-export GILDAS_URL=https://www.iram.fr/~gildas/dist
-export PIIC_URL=https://www.iram.fr/~gildas/dist
-sudo singularity build gildas-${GILDAS_RELEASE}-natif.sif gildas-natif.def
-
-# Then, run interactively (GILDAS shell)
-singularity shell gildas-latest.sif
-
-# Run a specific GILDAS application via the default runscript
-singularity run gildas-latest.sif "mapping"
-
-# Or via apprun shortcuts (defined in gildas_docker.def)
+# Apprun shortcuts (definition-built SIFs only)
 singularity run --app astro   gildas-latest.sif
 singularity run --app class   gildas-latest.sif
 singularity run --app clic    gildas-latest.sif
-singularity run --app imager  gildas-latest.sif
 singularity run --app mapping gildas-latest.sif
 singularity run --app piic    gildas-latest.sif
+singularity run --app imager  gildas-latest.sif
+singularity run --app viewer  gildas-latest.sif
 ```
+
+Every program runs directly by name: GILDAS tools from the default
+environment, IMAGER/PIIC tools via self-contained `/usr/local/bin`
+wrappers that select their own tree (a flavor never shadows a GILDAS
+program of the same name).
+
+Images are self-describing: `docker inspect` shows `abeelen.gildas.*`
+labels (release, base, target, IMAGER version), and
+`/etc/imager-version` / `/etc/piic-version` inside the image record the
+bundled component versions authoritatively (`none` when absent).
 
 ### Usage with Docker
 
@@ -107,13 +164,13 @@ docker run -it \
 
 where
 ```bash
--volume "/home/$USER:/home/$USER" 
+-volume "/home/$USER:/home/$USER"
 ```
 will mount the user home for Unix Users
 ```bash
 -volume "/Users/$USER:/Users/$USER"
 ```
-will do the same for MacOS users. MacOS users should also open remote display access : 
+will do the same for MacOS users. MacOS users should also open remote display access :
 
 ```bash
 open -a XQuartz
@@ -122,9 +179,9 @@ ip=$(ifconfig en0 | grep inet | awk '$1=="inet" {print $2}’)
 xhost + $ip
 ```
 
-You can then use any of the gildas command.
-
-Starting from the oct19a, one has to define which gildas environement to use either `gaggildas` or `gagpiic` before launching gildas command.
+You can then use any of the gildas commands directly by name — GILDAS,
+IMAGER and (on `*-piic` images) PIIC programs all work with no prefix,
+each selecting its own installation tree behind the scenes.
 
 It is easier to create usefull aliases in `~/.bashrc`
 
@@ -137,22 +194,25 @@ alias gildas_docker='docker run -it \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
        --env WAYLAND_DISPLAY \
+       --env WAYLAND_DISPLAY \
        --env XDG_RUNTIME_DIR \
        --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
        --volume "$HOME:$HOME" \
+       --volume "/Users/$USER:/Users/$USER" \
        --volume "$PWD:$PWD" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
        --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
        abeelen/gildas:latest-piic'
 
-alias clic='gildas_docker "gaggildas; clic"'
-alias mapping='gildas_docker "gaggildas; mapping"'
-alias astro='gildas_docker "gaggildas; astro"'
-alias piic='gildas_docker "gagpiic; piic"'
-alias cube='gildas_docker "gaggildas; cube"'
+alias clic='gildas_docker clic'
+alias mapping='gildas_docker mapping'
+alias astro='gildas_docker astro'
+alias piic='gildas_docker piic'
+alias cube='gildas_docker cube'
 [...]
-alias imager='gildas_docker "gaggildas; imager"'
+alias imager='gildas_docker imager'
+alias viewer='gildas_docker viewer'
 ```
 
 Alternatively if you do not need PIIC,
@@ -166,10 +226,12 @@ alias gildas_docker='docker run -it \
        --env HOME="$HOME" --env USER="$USER" \
        --env DISPLAY \
        --env WAYLAND_DISPLAY \
+       --env WAYLAND_DISPLAY \
        --env XDG_RUNTIME_DIR \
        --env XAUTHORITY \
        --volume "/etc/passwd:/etc/passwd:ro" \
        --volume "$HOME:$HOME" \
+       --volume "/Users/$USER:/Users/$USER" \
        --volume "$PWD:$PWD" \
        --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
        --volume "$XDG_RUNTIME_DIR:$XDG_RUNTIME_DIR" \
@@ -181,147 +243,74 @@ alias astro='gildas_docker astro'
 alias cube='gildas_docker cube'
 [...]
 alias imager='gildas_docker imager'
+alias viewer='gildas_docker viewer'
 ```
 
+### Container entrypoint
 
-## Building images
-
-With Docker 17.05 or higher :
+`docker-entrypoint.sh` sources `/etc/gildas-env.sh` (default GILDAS
+environment), then `exec`s the given command:
 
 ```bash
-export release=jan26a
-docker build \
-       --tag abeelen/gildas:${release} \
-       --tag abeelen/gildas:latest \
-       --target gildas \
-       --build-arg release=${release} \
-       -f Dockerfile .
+docker run --rm -it abeelen/gildas:latest mapping
+docker run --rm -it abeelen/gildas:latest imager
+docker run --rm -it abeelen/gildas:latest-piic piic
 ```
 
-### PIIC
-
-Starting with oct19a, PIIC is included in the container. The multi-stage
-`Dockerfile` provides two main targets:
-
-- `gildas` : image without PIIC
-- `gildas-piic` : image including PIIC
-
-To build the PIIC image for a given release:
-
-```bash
-export release=jan26a
-docker build \
-       --tag abeelen/gildas:${release}-piic \
-       --tag abeelen/gildas:latest-piic \
-       --target gildas-piic \
-       --build-arg release=${release} \
-       -f Dockerfile .
-```
-
-The default build uses the main GILDAS distribution URLs. For archived
-releases, the helper script `gildas_release.py` (see below) will
-generate the appropriate `--build-arg GILDAS_URL=...` and
-`--build-arg PIIC_URL=...` options to point to the archive trees.
-
-`Dockerfile` for this project are available at https://github.com/abeelen/gildas.git
-
-### Alpine-based images
-
-In addition to the default Debian-based images built from `Dockerfile`,
-this repository also provides Alpine variants built from
-`Dockerfile.alpine`.
-
-The recommended tags are:
-
-```bash
-export release=jan26a
-
-# GILDAS only, Alpine base image
-docker build \
-       --tag abeelen/gildas:${release}-alpine \
-       --tag abeelen/gildas:latest-alpine \
-       --target gildas \
-       --build-arg release=${release} \
-       -f Dockerfile.alpine .
-
-# GILDAS + PIIC, Alpine base image
-docker build \
-       --tag abeelen/gildas:${release}-piic-alpine \
-       --tag abeelen/gildas:latest-piic-alpine \
-       --target gildas-piic \
-       --build-arg release=${release} \
-       -f Dockerfile.alpine .
-```
-
-The helper script `gildas_release.py` can also generate commands for the
-Alpine images using the `--alpine` toggle:
-
-```bash
-# All missing releases (GILDAS and PIIC), Alpine variants
-./gildas_release.py --alpine
-
-# Single release, Alpine variants
-./gildas_release.py --release jan26a --alpine
-```
-
-When `--alpine` is used, the script produces tags with an `-alpine`
-suffix (for example `jan26a-alpine`, `jan26a-piic-alpine`, and their
-corresponding `latest-*-alpine` tags) and looks for these tags on
-Docker Hub.
-
-### Check available tags on dockerhub
-
-```bash
-curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags' | sed -e 's/[][]//g' -e 's/"//g' -e 's/ //g' | tr '}' '\n'  | awk -F: '{print $3}'
-```
-
-### Helper script for releases and builds
-
-The script `gildas_release.py` inspects the IRAM GILDAS/PIIC download
-directories and the Docker Hub tags for `abeelen/gildas`, then prints
-ready-to-run `docker build` / `docker push` commands.
-
-Typical usage:
-
-```bash
-# List build commands for all missing releases (GILDAS and PIIC),
-# ordered from oldest to newest
-./gildas_release.py
-
-# Same, but including releases that are already present on Docker Hub
-./gildas_release.py --force
-
-# Commands for a single release (and its -piic variant if available)
-./gildas_release.py --release jan26a
-```
-
-In all cases, the script emits commands for both the `gildas` and
-`gildas-piic` targets when the corresponding tarballs exist upstream,
-and adds the correct `GILDAS_URL` / `PIIC_URL` archive URLs when
-necessary.
-
-The legacy wrapper `check_new_release.py` is kept for backward
-compatibility; it simply calls the default behaviour of
-`gildas_release.py`.
+(Programs from the standalone IMAGER tree and the PIIC tree are
+self-contained `/usr/local/bin` wrappers selecting their own tree;
+a wrapper is only created when it does not shadow a GILDAS program.)
 
 ## Troubleshooting / FAQ
 
-- **X11 / display does not work (Docker)**  \
-       Ensure you have allowed local X11 connections and mounted the X11
-       socket, for example:
-       ```bash
-       xhost +SI:localuser:$(id -un)
-       docker run -it \
-                             --env DISPLAY \
-                             --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
-                             abeelen/gildas:latest clic
-       ```
-
+- **X11 / display does not work**  \
+        Most programs need a display: run `xhost
+        +SI:localuser:$(id -un)` on the host once per session and use the
+        full `docker run` command (or `gildas_docker` aliases) from
+        "Usage with Docker" above — `--ipc=host`, `DISPLAY` /
+        `XAUTHORITY` / Wayland passthrough and the X socket mount are all
+        required on cookie-authenticated or Wayland desktops. For
+        Singularity, `--bind /tmp/.X11-unix` suffices (`DISPLAY` passes
+        through). The `atk-bridge` message is harmless.
 - **I do not see my local files inside the container**  \
-       Check that your home directory (or relevant paths) are mounted with
-       `--volume` (see the Docker usage examples and aliases).
-
+        Check that your home directory (or relevant paths) are mounted with
+        `--volume`.
 - **PIIC is not available or not found**  \
-       Use a `*-piic` tag (for example `latest-piic`, `jan26a-piic`,
-       `latest-piic-alpine`) and start the PIIC environment with `gagpiic`
-       before launching `piic`.
+        Use a `*-piic` tag and run `piic` directly. Rebuild the image
+        if yours predates the `/usr/local/bin` wrappers.
+- **`clic` is missing (images built before the fix)**  \
+        Upstream gates `clic` on `GAG_USE_SANITIZE=yes` with gfortran,
+        which these images keep disabled. Current recipes ungate it
+        automatically; rebuild the image to get `clic`.
+- **`imager` / `viewer` are missing**  \
+        IMAGER is standalone (https://imager.oasu.u-bordeaux.fr), bundled
+        at `/imager-exe` with `/usr/local/bin` wrappers. Rebuild the
+        image if yours predates this.
+- **`greg` is missing**  \
+        Pull the newest tag — you are likely running a stale local image.
+- **Terminal does not interact (`mapping` etc.)**  \
+        Graphic programs open an X window and the terminal can go
+        unresponsive; run with `-nw` (no-window mode) for a pure
+        terminal session, which needs no display at all.
+- **Frozen session under Singularity (prompt shows, typing dead,
+  Ctrl-C dead)**  \
+        `singularity run <img> <prog>` can leave the payload outside the
+        terminal's foreground group (or without a controlling terminal),
+        so its first terminal read suspends it — `ps` shows `Tl` /
+        `do_signal_stop`, and only killing the terminal helps. Verified
+        working instead: interact through a shell first (its job control
+        sets the terminal up correctly — full readline interaction,
+        tested), or batch mode, which never touches the terminal:
+        ```bash
+        singularity exec docker://abeelen/gildas:latest bash
+        # then inside: mapping -nw
+        echo 'say "hi"' | singularity run docker://abeelen/gildas:latest mapping -nw
+        ```
+        Bare `docker run -it` always works (fresh pty, correct setup).
+
+## Further documentation
+
+- [docs/building.md](docs/building.md): manual Docker builds, build
+  args, PIIC, Debian images, native Singularity builds.
+- [docs/automation.md](docs/automation.md): `gildas_release.py`
+  reference, CI pipelines, SIF publishing.
