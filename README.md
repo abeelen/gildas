@@ -449,13 +449,15 @@ still missing. Native assets accumulate per release name on the same
 rolling release; the `.def` files remain the manual path for anything
 custom.
 
-On GitLab, converted SIFs are published the same way into the generic
-package registry (`gildas-sif` / `<tag>` / `gildas-<tag>.sif`): manual runs take an
-optional `SIF_TAGS` variable, schedules rebuild only stale tags. Authentication
-uses `CI_JOB_TOKEN` by default; if the instance refuses job-token uploads (HTTP
-403), set a `GITLAB_PKG_TOKEN` CI/CD variable instead (project access token,
-Developer role, `api` scope). Native `.def` builds stay on GitHub, where
-runners have root.
+On GitLab, converted SIFs are pushed as OCI artifacts to the project
+container registry (`<registry>/<project>/sif:<tag>`, same job
+credentials as the Docker push, nothing to configure): manual runs take
+an optional `SIF_TAGS` variable, schedules refresh weekly. Pull with
+`singularity pull oras://<registry>/<project>/sif:<tag>` (browse exact
+paths under Deploy > Container Registry). The SIF layer type is
+pinned to `application/vnd.sylabs.sif.layer.v1.sif` — plain `oras push`
+defaults to a type Singularity refuses. Native `.def` builds stay on
+GitHub, where runners have root.
 
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):
