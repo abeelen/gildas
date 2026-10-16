@@ -8,9 +8,10 @@ tags for `abeelen/gildas`, then prints ready-to-run `docker build` /
 when the corresponding tarballs exist upstream, with the correct
 `GILDAS_URL` / `PIIC_URL` archive URLs when necessary. The release is
 inlined and quoted, empty `--build-arg`s are dropped, and `latest*`
-tags go to the newest release per family (`latest` for GILDAS,
-`latest-piic` for GILDAS+PIIC, tracked independently; single
-`--release` always tags `latest`). Archived releases are excluded
+tags go to the newest release per family (`latest-alpine` for GILDAS,
+`latest-piic-alpine` for GILDAS+PIIC, tracked independently, plus the
+unsuffixed `latest` / `latest-piic` aliases; single `--release` always
+tags `latest`). Archived releases are excluded
 unless `--archive` is given (PIIC commands often need it, as PIIC
 releases lag behind GILDAS ones — see `--piic`).
 
