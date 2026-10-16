@@ -11,6 +11,7 @@
 - GitHub Actions workflow (`.github/workflows/build.yml`) and GitLab pipeline (`.gitlab-ci.yml`): weekly + recipe-push + manual builds via `gildas_release.py --execute`, print-only plan on pull/merge requests
 - SIF publishing (`.github/workflows/sif.yml`): Hub tags converted to Singularity images on the rolling `sif-images` GitHub release, plus on-demand native SIF builds from the tarballs; GitLab `sif` job publishes conversions to the generic package registry
 - Offline pytest suite for `gildas_release.py` (`tests/`, run in both CIs); script simplified to 971 lines (`--json`, `--repo`/`--dockerfile`, `--no-tag-latest` dropped)
+- `--execute --log-dir`: per-image build logs (GitLab artifacts) with tail-only console output; CI pinned to `ubuntu-24.04`, Node20 actions replaced
 - `gildas_release.py --singularity`: emit `singularity build ... docker://...` commands
 - `gildas_release.py --natif`: emit native `singularity build ... .def` commands (archive URLs auto-resolved)
 - GILDAS/IMAGER coupling in `gildas_release.py`: `imager_release()` lists upstream IMAGER versions, each release auto-maps (`oct26a` → `IMAGER_VERSION=oct26`, fallback `last` + warning, `--imager-version` override)

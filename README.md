@@ -388,6 +388,7 @@ Typical usage:
 # Debian variants and direct execution
 ./gildas_release.py --debian
 ./gildas_release.py --release jan26a --execute
+./gildas_release.py --release jan26a --execute --log-dir logs
 ./gildas_release.py -v   # info logs, -vv for debug
 ```
 
@@ -427,7 +428,11 @@ Pushing needs two repo secrets: `DOCKERHUB_USERNAME` and
 `DOCKERHUB_TOKEN` (a Hub access token with Read & Write permissions).
 Builds reuse previously pushed layers (previous tags are pre-pulled),
 so unchanged images rebuild in minutes while a new release compiles
-from scratch (up to ~1 h per image, jobs run in parallel).
+from scratch (up to ~1 h per image, jobs run in parallel). With
+`--execute --log-dir logs`, each build tees full output to
+`logs/<tag>.log` (kept as GitLab artifacts for a week) and prints only
+the tail, keeping job logs under their size limits. Runners are pinned
+to `ubuntu-24.04` so the environment never shifts under us.
 
 `.github/workflows/sif.yml` converts Hub tags to Singularity SIFs
 (`latest`, `latest-piic` by default, override via manual dispatch) and

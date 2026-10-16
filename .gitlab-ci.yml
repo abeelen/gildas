@@ -61,9 +61,13 @@ build:
     - if [ "$ARCHIVE" = "1" ]; then ARGS="$ARGS --archive"; fi
     - CACHE_TAGS="latest latest-piic"
     - if [ "$FAMILY" = "debian" ]; then CACHE_TAGS="latest-debian latest-piic-debian"; fi
-    - for tag in $CACHE_TAGS; do docker pull abeelen/gildas:"$tag" || true; done
+    - for tag in $CACHE_TAGS; do docker pull -q abeelen/gildas:"$tag" || true; done
     # shellcheck disable=SC2086
-    - ./gildas_release.py $ARGS --execute
+    - ./gildas_release.py $ARGS --execute --log-dir logs
+  artifacts:
+    paths: [logs/]
+    expire_in: 1 week
+    when: always
 
 sif:
   # Convert Hub tags to SIFs into the generic package registry
