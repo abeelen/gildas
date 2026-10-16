@@ -10,6 +10,8 @@
 # Set the `natif` input to build a native SIF instead (newest release by
 # default, Alpine unless `debian` is set; `release` pins one explicitly).
 # Native assets accumulate per release name on the same rolling release.
+# The Friday schedule also runs the native build, but only when its
+# asset is still missing (upstream tarballs are immutable).
 #
 # Uses the distribution singularity-container package (4.x on Ubuntu
 # 24.04), installed with plain apt-get in both jobs — no third-party
@@ -81,7 +83,7 @@ jobs:
           done
 
   natif:
-    if: github.event_name == 'workflow_dispatch' && inputs.natif == true
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.natif == true)
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -118,9 +120,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          sif=$(echo '${{ steps.sel.outputs.command }}' | grep -oE 'gildas-[^ ]+\.sif')
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if gh release view sif-images --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$sif"; then
+              echo "$sif already published, skipping."
+              exit 0
+            fi
+          fi
           echo "Running: ${{ steps.sel.outputs.command }}"
           sudo -E bash -c '${{ steps.sel.outputs.command }}'
-          sif=$(echo '${{ steps.sel.outputs.command }}' | grep -oE 'gildas-[^ ]+\.sif')
           gh release view sif-images >/dev/null 2>&1 || \
             gh release create sif-images --title "Singularity images (rolling)" \
               --notes "SIF images converted from Docker Hub tags. Rebuilt when the tags move."

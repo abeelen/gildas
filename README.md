@@ -444,9 +444,10 @@ keeps them fresh.
 The same workflow builds one native SIF from the tarballs on demand
 (manual dispatch with the `natif` input: newest release by default,
 Alpine unless `debian` is set, `release` pins one explicitly, archived
-releases included automatically). Native assets accumulate per release
-name on the same rolling release; the `.def` files remain the manual
-path for anything custom.
+releases included automatically) and on schedule whenever its asset is
+still missing. Native assets accumulate per release name on the same
+rolling release; the `.def` files remain the manual path for anything
+custom.
 
 On GitLab, converted SIFs are published the same way into the generic
 package registry (`gildas-sif` / `<tag>` / `gildas-<tag>.sif`, no extra
