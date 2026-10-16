@@ -7,7 +7,7 @@
 - Alpine is the default base image: unsuffixed tags (`latest`, `jan26a`, `latest-piic`) are Alpine, Debian moved to `-debian` tags (`gildas_release.py --debian`); `--piic` lists only PIIC commands, pairing main-tree PIIC with GILDAS from main or archive (`--archive` also searches PIIC in the archives)
 - Self-describing images: `abeelen.gildas.*` labels plus authoritative `/etc/imager-version` / `/etc/piic-version` files in all four recipes
 - GitHub Actions workflow (`.github/workflows/build.yml`) and GitLab pipeline (`.gitlab-ci.yml`): weekly + recipe-push + manual builds via `gildas_release.py --execute`, print-only plan on pull/merge requests
-- SIF publishing (`.github/workflows/sif.yml`): Hub tags converted to Singularity images on the rolling `sif-images` GitHub release, plus on-demand native SIF builds from the tarballs
+- SIF publishing (`.github/workflows/sif.yml`): Hub tags converted to Singularity images on the rolling `sif-images` GitHub release, plus on-demand native SIF builds from the tarballs; GitLab `sif` job publishes conversions to the generic package registry
 - Offline pytest suite for `gildas_release.py` (`tests/`, run in both CIs); script simplified to 971 lines (`--json`, `--repo`/`--dockerfile`, `--no-tag-latest` dropped)
 - `gildas_release.py --singularity`: emit `singularity build ... docker://...` commands
 - `gildas_release.py --natif`: emit native `singularity build ... .def` commands (archive URLs auto-resolved)

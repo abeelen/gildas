@@ -16,7 +16,7 @@
 #   PIIC    : set to 1 for PIIC images only
 #   ARCHIVE : set to 1 to include archived releases
 
-stages: [plan, build]
+stages: [plan, build, publish]
 
 variables:
   DOCKER_BUILDKIT: "1"
@@ -64,3 +64,57 @@ build:
     - for tag in $CACHE_TAGS; do docker pull abeelen/gildas:"$tag" || true; done
     # shellcheck disable=SC2086
     - ./gildas_release.py $ARGS --execute
+
+sif:
+  # Convert Hub tags to SIFs into the generic package registry
+  # (gildas-sif / <tag> / gildas-<tag>.sif). Needs no Docker and no extra
+  # variables (CI_JOB_TOKEN authenticates); native .def builds stay on
+  # GitHub, where runners have root. Manual runs take SIF_TAGS
+  # (default: latest + latest-piic); schedules rebuild only tags pushed
+  # after the published package (fail-open).
+  stage: publish
+  image: ubuntu:24.04
+  timeout: 3h
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq wget python3 squashfs-tools ca-certificates
+    - |
+      DEB_URL=$(python3 -c "
+      import json, urllib.request
+      req = urllib.request.Request('https://api.github.com/repos/sylabs/singularity/releases/latest', headers={'Accept': 'application/vnd.github+json'})
+      rel = json.load(urllib.request.urlopen(req))
+      debs = [a for a in rel['assets'] if a['name'].startswith('singularity-ce_') and a['name'].endswith('_amd64.deb')]
+      noble = [a['browser_download_url'] for a in debs if 'noble' in a['name']]
+      other = [a['browser_download_url'] for a in debs if 'noble' not in a['name']]
+      print((noble + other)[0])
+      ")
+      wget -q -O /tmp/singularity.deb "$DEB_URL"
+      dpkg -i /tmp/singularity.deb || apt-get install -y -qq -f
+      singularity version
+  script:
+    - |
+      TAGS="${SIF_TAGS:-latest latest-piic}"
+      for tag in $TAGS; do
+        sif="gildas-$tag.sif"
+        if [ "$CI_PIPELINE_SOURCE" = "schedule" ]; then
+          pushed=$(curl -s "https://hub.docker.com/v2/repositories/abeelen/gildas/tags/$tag" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_last_pushed',''))" 2>/dev/null || true)
+          created=$(TAG="$tag" curl -s --header "JOB-TOKEN: $CI_JOB_TOKEN" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages?package_name=gildas-sif" | TAG="$tag" python3 -c "import json,os,sys; print(next((p['created_at'] for p in json.load(sys.stdin) if p.get('version') == os.environ['TAG']), ''))" 2>/dev/null || true)
+          if [ -n "$pushed" ] && [ -n "$created" ] && [ "$created" \> "$pushed" ]; then
+            echo "$tag unchanged since $created, skipping."
+            continue
+          fi
+        fi
+        rm -f "$sif"
+        if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
+          curl -s --header "JOB-TOKEN: $CI_JOB_TOKEN" --request DELETE "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif" >/dev/null || true
+          curl --fail --header "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$sif" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/gildas-sif/$tag/$sif"
+        else
+          echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
+        fi
+        rm -f "$sif"
+      done
