@@ -463,7 +463,10 @@ weekly schedules are created in the GitLab UI (Build > Pipeline
 schedules), manual runs via "Run pipeline" with optional `RELEASE` /
 `DEBIAN=1` / `PIIC=1` / `ARCHIVE=1` variables, and merge requests get a
 print-only plan. It needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
-CI/CD variables.
+CI/CD variables. The Alpine build leg additionally mirrors
+`abeelen/gildas:latest` to the project container registry as
+`$CI_REGISTRY_IMAGE:latest` (short-lived registry credentials, nothing
+to configure).
 
 ### Container entrypoint
 

@@ -64,6 +64,17 @@ build:
     - for tag in $CACHE_TAGS; do docker pull -q abeelen/gildas:"$tag" || true; done
     # shellcheck disable=SC2086
     - ./gildas_release.py $ARGS --execute --log-dir logs
+    - |
+      # Mirror alpine-latest to the GitLab container registry (Alpine leg
+      # only, to start with). Short-lived CI_REGISTRY_* credentials, no
+      # setup needed. Skipped when there is no local image to push.
+      if [ "$FAMILY" = "alpine" ] && docker image inspect abeelen/gildas:latest >/dev/null 2>&1; then
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+        docker tag abeelen/gildas:latest "$CI_REGISTRY_IMAGE:latest"
+        docker push "$CI_REGISTRY_IMAGE:latest"
+      else
+        echo "Skipping GitLab registry mirror (non-Alpine leg or no local latest image)."
+      fi
   artifacts:
     paths: [logs/]
     expire_in: 1 week
