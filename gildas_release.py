@@ -767,11 +767,16 @@ def natif_command(
     if imager_version is None:
         imager_version = imager_version_for_release(release)
 
-    env = [f"GILDAS_RELEASE={shlex.quote(release)}", f"IMAGER_VERSION={shlex.quote(imager_version)}"]
+    # NOTE: SINGULARITYENV_ prefix is required: plain VAR=... prefixes
+    # never reach %post (silently dropped), only SINGULARITYENV_* does.
+    env = [
+        f"SINGULARITYENV_GILDAS_RELEASE={shlex.quote(release)}",
+        f"SINGULARITYENV_IMAGER_VERSION={shlex.quote(imager_version)}",
+    ]
     if release not in sets.gildas:
-        env.append(f"GILDAS_URL={GILDAS_ARCHIVE_URL}")
+        env.append(f"SINGULARITYENV_GILDAS_URL={GILDAS_ARCHIVE_URL}")
     if has_piic and release not in sets.piic:
-        env.append(f"PIIC_URL={PIIC_ARCHIVE_URL}")
+        env.append(f"SINGULARITYENV_PIIC_URL={PIIC_ARCHIVE_URL}")
 
     alpine = dockerfile.endswith("alpine")
     deffile = "gildas-natif-alpine.def" if alpine else "gildas-natif.def"

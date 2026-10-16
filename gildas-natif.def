@@ -27,7 +27,10 @@ From: debian:stable-slim
 
     # Defaults for build-time environment variables. Note that the
     # %environment section is only used at runtime, so we must set
-    # sensible defaults again here for the build stage.
+    # sensible defaults again here for the build stage. Also, the host
+    # environment does NOT propagate into %post: pass variables as
+    # SINGULARITYENV_* when building (plain VAR=... prefixes are
+    # silently dropped, then set -u aborts).
     : "${GILDAS_RELEASE:=jan26a}"
     : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
     : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"

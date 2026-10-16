@@ -63,9 +63,8 @@ Two ways to build a local SIF image (Debian or Alpine base):
 | Method | Command | Pros | Cons |
 |--------|---------|------|------|
 | From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
-| Native (`gildas-natif.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `GILDAS_URL`/`PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
-| From Docker Hub | `singularity build gildas-jan26a.sif docker://abeelen/gildas:jan26a` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
-| Native Alpine (`gildas-natif-alpine.def`) | `GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
+| Native (`gildas-natif.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
+| Native Alpine (`gildas-natif-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
 
 The helper script generates the `docker://` commands for you
 (`./gildas_release.py --singularity`, add `--debian` for the Debian tags).
@@ -78,16 +77,19 @@ singularity build gildas-latest.sif docker://abeelen/gildas:latest
 singularity build gildas-latest.sif gildas-latest.def
 
 # Native build from tarballs (no Docker involved), with configurable
-# release and URLs (see %environment in gildas-natif.def)
-export GILDAS_RELEASE=jan26a
-export GILDAS_URL=https://www.iram.fr/~gildas/dist
-export PIIC_URL=https://www.iram.fr/~gildas/dist
-export MAKE_JOBS=$(nproc)
-# export WITH_TEXLIVE=1  # only if you need the pipeline (texlive in image)
-sudo singularity build gildas-${GILDAS_RELEASE}-natif.sif gildas-natif.def
+# release and URLs (see %environment in gildas-natif.def).
+# NOTE: SINGULARITYENV_ prefix is mandatory, plain VAR=... never reaches
+# %post (silently dropped). Easiest: use `./gildas_release.py --natif`,
+# which generates the right command (IMAGER pinned, archive URLs added).
+export SINGULARITYENV_GILDAS_RELEASE=jan26a
+export SINGULARITYENV_GILDAS_URL=https://www.iram.fr/~gildas/dist
+export SINGULARITYENV_PIIC_URL=https://www.iram.fr/~gildas/dist
+export SINGULARITYENV_MAKE_JOBS=$(nproc)
+# export SINGULARITYENV_WITH_TEXLIVE=1  # only if you need the pipeline (texlive in image)
+sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-natif.sif gildas-natif.def
 
 # Native Alpine build (musl patches from Dockerfile.alpine included)
-sudo singularity build gildas-${GILDAS_RELEASE}-natif-alpine.sif gildas-natif-alpine.def
+sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-natif-alpine.sif gildas-natif-alpine.def
 
 # Then, run interactively (GILDAS shell)
 singularity shell gildas-latest.sif

@@ -59,6 +59,14 @@ From: alpine:latest
         linux-headers
 
     # Build and install GILDAS
+    # Defaults for build-time variables: the host environment does NOT
+    # propagate into %post, so pass them as SINGULARITYENV_* when building
+    # (plain VAR=... prefixes are silently dropped, then set -u aborts).
+    : "${GILDAS_RELEASE:=jan26a}"
+    : "${GILDAS_URL:=https://www.iram.fr/~gildas/dist}"
+    : "${PIIC_URL:=https://www.iram.fr/~gildas/dist}"
+    : "${GAG_USE_SANITIZE:=no}"
+    : "${MAKE_JOBS:=$(nproc)}"
     release="${GILDAS_RELEASE}"
     gildas_url="${GILDAS_URL}"
     piic_url="${PIIC_URL}"
