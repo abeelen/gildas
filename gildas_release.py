@@ -797,7 +797,9 @@ def natif_command(
         env.append(f"SINGULARITYENV_PIIC_URL={PIIC_ARCHIVE_URL}")
 
     alpine = dockerfile.endswith("alpine")
-    deffile = "gildas-natif-alpine.def" if alpine else "gildas-natif.def"
+    # Single def recipe for both bases (Alpine musl patches apply cleanly
+    # to either tree); the SIF name keeps the base for clarity.
+    deffile = "gildas-natif.def"
     sif = f"gildas-{release}-natif-alpine.sif" if alpine else f"gildas-{release}-natif.sif"
     return NatifCommand(
         release=release, has_piic=has_piic, command=f"{' '.join(env)} singularity build {sif} {deffile}", alpine=alpine, imager_version=imager_version

@@ -131,6 +131,9 @@ From: alpine:latest
         # the layout; verified against oct26).
         imroot="/${imdir}"
         for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do
+            if [ "${_p}" = "clic-ungate" ] && [ ! -f "${imroot}/packages/clic/Makefile" ]; then
+                echo "SKIP ${_p} (no clic package in this tree)" >&2; continue
+            fi
             (cd "${imroot}" && patch -p1 --forward < "/opt/patches/${_p}.patch") \
                 || { echo "ERROR: patch ${_p} failed (IMAGER tree)" >&2; exit 1; }
         done

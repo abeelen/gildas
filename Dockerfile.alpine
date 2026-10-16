@@ -141,6 +141,9 @@ RUN set -eu -o pipefail; \
     echo "${IMDIR#imager-src-}" > /etc/imager-version; \
     tar xzf imager-dl.tgz -C /; rm -f imager-dl.tgz; \
     for _p in musl-sysc-cache musl-unistd musl-sighandler clic-ungate sic-foreground; do \
+      if [ "$_p" = "clic-ungate" ] && [ ! -f packages/clic/Makefile ]; then \
+        echo "SKIP ${_p} (no clic package in this tree)" >&2; continue; \
+      fi; \
       (cd "/${IMDIR}" && patch -p1 --forward < "/tmp/patches/${_p}.patch") || { echo "ERROR: patch ${_p} failed (IMAGER tree)" >&2; exit 1; }; \
     done; \
     IMDIR="${IMDIR}" JOBS="${MAKE_JOBS:-$(nproc)}" bash -c ' \

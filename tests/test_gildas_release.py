@@ -160,7 +160,7 @@ def test_natif_command_bundles_piic_when_available():
     assert cmd is not None and cmd.has_piic
     assert "PIIC_URL=https://www.iram.fr/~gildas/dist/archive/piic" not in cmd.command
     assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd.command
-    assert "gildas-natif-alpine.def" in cmd.command
+    assert "gildas-natif.def" in cmd.command
     cmd = natif_command("oct26a", sets, imager_version="oct26")
     assert cmd is not None and not cmd.has_piic
     assert natif_command("nosuch", sets) is None
