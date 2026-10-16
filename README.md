@@ -450,14 +450,19 @@ rolling release; the `.def` files remain the manual path for anything
 custom.
 
 On GitLab, converted SIFs are pushed to the project container registry
-(`<registry>/<project>/sif:<tag>`) with `singularity push` over ORAS,
-authenticated with the same job credentials as the Docker push (a plain
-`oras push` stamps an artifact type this registry rejects, so the
-Singularity-native push is required). Pull with
-`singularity pull oras://<registry>/<project>/sif:<tag>` (exact paths
-under Deploy > Container Registry). Manual runs take an optional
-`SIF_TAGS` variable, schedules refresh weekly. Native `.def` builds stay
-on GitHub, where runners have root.
+with `singularity push` over ORAS, authenticated with the same job
+credentials as the Docker push (a plain `oras push` stamps an artifact
+type this registry rejects, so the Singularity-native push is required).
+On the LAM instance (`gitlab.lam.fr`):
+
+```bash
+singularity pull oras://registry.lam.fr/abeelen/gildas/sif:latest
+singularity pull oras://registry.lam.fr/abeelen/gildas/sif:latest-piic
+```
+
+(exact paths also browsable under Deploy > Container Registry).
+Manual runs take an optional `SIF_TAGS` variable, schedules refresh
+weekly. Native `.def` builds stay on GitHub, where runners have root.
 
 The same automation exists for GitLab (`.gitlab-ci.yml`, same design,
 running on runners tagged `docker` that provide the daemon directly):
@@ -466,9 +471,9 @@ schedules), manual runs via "Run pipeline" with optional `RELEASE` /
 `DEBIAN=1` / `PIIC=1` / `ARCHIVE=1` variables, and merge requests get a
 print-only plan. It needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`
 CI/CD variables. The Alpine build leg additionally mirrors
-`abeelen/gildas:latest` to the project container registry as
-`$CI_REGISTRY_IMAGE:latest` (short-lived registry credentials, nothing
-to configure).
+`abeelen/gildas:latest` to the project container registry (on LAM:
+`registry.lam.fr/abeelen/gildas:latest`, short-lived registry
+credentials, nothing to configure).
 
 ### Container entrypoint
 
