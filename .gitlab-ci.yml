@@ -105,12 +105,15 @@ sif:
   script:
     - |
       TAGS="${SIF_TAGS:-latest latest-piic}"
-      echo "$CI_REGISTRY_PASSWORD" | singularity remote login -u "$CI_REGISTRY_USER" --password-stdin oras://"$CI_REGISTRY"
+      # Docker-style authfile for the registry (remote login only handles
+      # Sylabs endpoints, not generic OCI registries).
+      mkdir -p "$HOME/.docker"
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 -w0)" > "$HOME/.docker/config.json"
       for tag in $TAGS; do
         sif="gildas-$tag.sif"
         rm -f "$sif"
         if singularity build "$sif" "docker://abeelen/gildas:$tag"; then
-          singularity push -U "$sif" oras://"$CI_REGISTRY_IMAGE/sif:$tag"
+          singularity push -U --authfile "$HOME/.docker/config.json" "$sif" oras://"$CI_REGISTRY_IMAGE/sif:$tag"
         else
           echo "WARNING: could not build $sif (tag $tag missing on Hub?), skipping."
         fi
