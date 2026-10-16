@@ -86,7 +86,7 @@ sif:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
   before_script:
-    - apt-get update -qq && apt-get install -y -qq singularity-container squashfs-tools python3 ca-certificates
+    - apt-get update -qq && apt-get install -y -qq singularity-container squashfs-tools python3 ca-certificates curl
     - singularity version
   script:
     - |
