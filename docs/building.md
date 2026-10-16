@@ -106,7 +106,7 @@ curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags'
 
 | Method | Command | Pros | Cons |
 |--------|---------|------|------|
-| From Docker Hub | `singularity build gildas-jan26a-alpine.sif docker://abeelen/gildas:jan26a-alpine` | fast, no compiler needed, bit-identical to Docker | needs the Docker tag to exist |
+| From Docker Hub (`gildas-latest.def`) | `sed "s\|^From: .*\|From: abeelen/gildas:jan26a-alpine\|" gildas-latest.def > /tmp/sif-build.def && singularity build gildas-jan26a-alpine.sif /tmp/sif-build.def` (`./gildas_release.py --singularity`) | fast, no compiler needed, runscript + `%apprun` kept | needs the Docker tag to exist |
 | Native (`gildas-natif.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
 | Native Alpine (`gildas-natif-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
 
