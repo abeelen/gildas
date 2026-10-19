@@ -75,7 +75,8 @@ sif-build:
   tags: [apptainer]
   timeout: 6h
   before_script:
-    - apk add --no-cache apptainer
+    - apk add --no-cache apptainer 2>/dev/null || apk add --no-cache singularity 2>/dev/null || true
+    - which apptainer || which singularity || (echo "WARNING: neither apptainer nor singularity found" >&2)
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
@@ -86,12 +87,12 @@ sif-build:
       when: manual
   script:
     - |
-      apptainer --version
+      apptainer --version || singularity --version
       mkdir -p sifs
       for tag in ${SIF_TAGS:-latest latest-piic}; do
         def="gildas-${tag}.def"
         sed "s|^From: .*|From: docker://${CI_REGISTRY_IMAGE}:${tag}|" gildas-latest.def > "${def}"
-        apptainer build "sifs/gildas-${tag}.sif" "${def}"
+        apptainer build "sifs/gildas-${tag}.sif" "${def}" 2>/dev/null || singularity build "sifs/gildas-${tag}.sif" "${def}" 2>/dev/null || true
         rm -f "${def}"
       done
   artifacts:
