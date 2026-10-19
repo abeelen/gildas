@@ -74,6 +74,8 @@ sif-build:
   stage: publish
   tags: [apptainer]
   timeout: 6h
+  before_script:
+    - apk add --no-cache apptainer
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
