@@ -56,13 +56,15 @@ Workarounds for pre-fix images: interact through an inner shell
 - Consequence: shared/docker runners build Docker images only. SIFs are
   built by the manual `sif-build` job on the dedicated `apptainer`
   runner instead, with `APPTAINER_TMPDIR` on the build volume because
-  the PIIC rootfs does not fit in the runner's `/tmp`.
+  the PIIC rootfs does not fit in the runner's `/tmp`, then pushed to
+  the project container registry as `sif:<tag>` OCI artifacts.
 
 ## Registry lessons (Oct 2026)
 
 - GitLab generic packages API answers 403 to CI_JOB_TOKEN *and* to a
-  project token with `api` scope on this instance → abandoned for SIFs
-  (Docker `latest` mirror via `CI_REGISTRY_*` works fine).
+  project token with `api` scope on this instance → abandoned for SIFs.
+  Use the container registry instead (`sif:<tag>`), not the generic
+  package API (Docker `latest` mirror via `CI_REGISTRY_*` works fine).
 - Plain `oras push` stamps `artifactType:
   application/vnd.unknown.artifact.v1`, which strict registries reject
   at manifest level; `singularity push` omits it (verified layout by

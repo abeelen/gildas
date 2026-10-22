@@ -21,9 +21,10 @@
   bootstrap) and `gildas-native-alpine.def` (tarball build); native SIFs
   now use `gildas-<release>[-piic]-native-alpine.sif`
 - CI: GitHub Actions + GitLab pipeline (scheduled, manual, print-only
-  plans), SIF publishing to a rolling release plus GitLab artifacts
-  mirror; native SIF builds require `SINGULARITYENV_*`, no `/tmp` globs
-  in def cleanup (builder's own busy mounts)
+  plans), SIF publishing to a rolling GitHub release plus GitLab
+  container-registry OCI artifacts; native SIF builds require
+  `SINGULARITYENV_*`, no `/tmp` globs in def cleanup (builder's own busy
+  mounts)
 - SIC foreground patch (`patches/sic-foreground.patch`, all recipes):
   GILDAS `setpgrp()` at startup moved interactive sessions out of the
   terminal foreground group (fatal SIGTTIN freeze); foreground restored
@@ -49,9 +50,10 @@
   cache moved to job-specific directories under `$CI_PROJECT_DIR`
   (override with `SIF_TMPDIR` / `SIF_CACHEDIR`), cleaned on exit;
   `--disable-cache` and `--force` reduce peak space and make reruns safe
-- GitLab `sif-build` clears `sifs/` before building and logs the per-file
-  and total sizes, so `artifacts.zip` contains only the current
-  `SIF_TAGS` rather than any stale SIFs left in a reused workspace
+- GitLab `sif-build` now pushes SIFs to the project container registry
+  as `sif:<tag>` OCI artifacts (`singularity push` with an authfile from
+  `CI_REGISTRY_*`) instead of archiving a ~893 MiB `sifs/` artifact;
+  stale local SIFs are removed before the build and after each push
 - SIF label parity: Docker-converted SIFs inherit every
   `abeelen.gildas.*` label, native SIF builds now write the same keys
   from `%post`, and `defs/gildas-docker.def` no longer claims the source

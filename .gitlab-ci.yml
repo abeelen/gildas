@@ -11,7 +11,9 @@
 # present) and only fall back to Docker Hub, which avoids Hub rate limits
 # on repeat builds. The same tags are mirrored back after each build.
 # SIFs are built natively on the dedicated `apptainer` runner from the
-# GitLab registry (no Docker installed there).
+# GitLab registry (no Docker installed there) and pushed back to the
+# project registry as `sif:<tag>` OCI artifacts. GitHub Actions keeps
+# publishing its SIFs as `sif-images` release assets instead.
 
 stages: [plan, build, publish]
 
@@ -112,13 +114,16 @@ build:
 sif-build:
   # Build the SIFs directly on the `apptainer` runner, for users who can
   # reach gitlab.lam.fr. The runner has no Docker: apptainer pulls the
-  # image from the GitLab Container Registry instead. The per-tag def
-  # file rewrites `From:` on defs/gildas-docker.def. Manual only.
+  # image from the GitLab Container Registry instead. Each SIF is then
+  # pushed to `<registry>/<project>/sif:<tag>` with `singularity push`
+  # (plain `oras push` stamps an artifact type this registry rejects).
+  # The per-tag def file rewrites `From:` on defs/gildas-docker.def.
+  # Manual only.
   stage: publish
   tags: [apptainer]
   timeout: 6h
   before_script:
-    - 'apk add --no-cache apptainer 2>/dev/null || apk add --no-cache singularity 2>/dev/null || true'
+    - 'apk add --no-cache apptainer ca-certificates 2>/dev/null || apk add --no-cache singularity ca-certificates 2>/dev/null || true'
     - 'which apptainer || which singularity || (echo "WARNING: neither apptainer nor singularity found" >&2)'
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -148,9 +153,8 @@ sif-build:
       export APPTAINER_CACHEDIR="$build_cache"
       export SINGULARITY_CACHEDIR="$build_cache"
       export TMPDIR="$build_tmp"
-      # The runner may reuse the workspace, and sifs/ is archived wholesale.
-      # Start clean so artifacts.zip contains only the tags built this run
-      # (otherwise old SIFs inflate it by hundreds of MiB).
+      # The runner may reuse the workspace. SIFs are no longer archived,
+      # but stale local copies still consume the build volume.
       rm -rf sifs
       mkdir -p "$build_tmp" "$build_cache" sifs
 
@@ -181,10 +185,23 @@ sif-build:
       fi
       "$builder" --version
 
-      # Default is both rolling tags: ~253 MiB (latest) + ~640 MiB
-      # (latest-piic), so artifacts.zip is ~893 MiB before GitLab's zip
-      # pass. That is the SIF payload, not temp/cache. Set SIF_TAGS to a
-      # single tag when only one artifact is needed, e.g. SIF_TAGS=latest.
+      : "${CI_REGISTRY:?CI_REGISTRY is not set}"
+      : "${CI_REGISTRY_IMAGE:?CI_REGISTRY_IMAGE is not set}"
+      : "${CI_REGISTRY_USER:?CI_REGISTRY_USER is not set}"
+      : "${CI_REGISTRY_PASSWORD:?CI_REGISTRY_PASSWORD is not set}"
+
+      # Docker-style authfile for the registry: singularity remote login
+      # only handles Sylabs endpoints, not generic OCI registries.
+      authfile="${build_tmp}/docker-config.json"
+      printf '{"auths":{"%s":{"auth":"%s"}}}' \
+        "$CI_REGISTRY" \
+        "$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')" \
+        > "$authfile"
+      chmod 600 "$authfile"
+
+      # Default is both rolling tags. The SIFs are pushed to the project
+      # registry, not archived, so their ~253/~640 MiB size no longer
+      # determines the pipeline artifact size.
       for tag in ${SIF_TAGS:-latest latest-piic}; do
         # Build the per-tag def from defs/gildas-docker.def. Write to a temp
         # file: when tag == latest, the source is not the destination, but
@@ -196,14 +213,13 @@ sif-build:
         # --disable-cache keeps the compressed OCI layers out of the build
         # volume: the uncompressed rootfs alone is already the peak user.
         # --force makes reruns overwrite a partial/previous SIF.
-        "$builder" build --fakeroot --disable-cache --force "sifs/gildas-${tag}.sif" "${tmp_def}"
+        sif="sifs/gildas-${tag}.sif"
+        "$builder" build --fakeroot --disable-cache --force "$sif" "${tmp_def}"
         rm -f "${tmp_def}"
         tmp_def=""
+        echo "Built $sif ($(du -h "$sif" | cut -f1)); pushing to oras://${CI_REGISTRY_IMAGE}/sif:${tag} ..."
+        "$builder" push -U --authfile "$authfile" "$sif" "oras://${CI_REGISTRY_IMAGE}/sif:${tag}"
+        rm -f "$sif"
       done
 
-      echo "SIF artifacts:"
-      ls -lh sifs/
-      echo "Total SIF payload: $(du -sh sifs | cut -f1)"
-  artifacts:
-    paths: [sifs/]
-    expire_in: never
+      echo "SIFs pushed; local copies removed."

@@ -1,6 +1,8 @@
 # Convert Docker Hub tags to Singularity SIFs and attach them to the
 # rolling `sif-images` GitHub release, plus optionally build one native
-# SIF from the tarballs (full recompile, needs root).
+# SIF from the tarballs (full recompile, needs root). GitHub publishes
+# release assets only; the separate GitLab `sif-build` job pushes SIFs
+# to the GitLab container registry.
 #
 # Manual dispatch converts the given tags (default: latest + latest-piic);
 # the weekly schedule rebuilds a tag only when its Hub push is newer than

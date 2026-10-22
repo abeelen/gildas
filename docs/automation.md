@@ -156,7 +156,21 @@ project container registry (on LAM:
 credentials, nothing to configure).
 
 SIFs are built by the manual `sif-build` job on the `apptainer` runner,
-from the GitLab registry, and published as `sifs/*.sif` job artifacts.
+from the GitLab registry, and pushed back to the project container
+registry as `sif:<tag>` OCI artifacts with `singularity push` (plain
+`oras push` is rejected by this registry). On LAM:
+
+```bash
+singularity pull gildas-latest.sif oras://registry.lam.fr/abeelen/gildas/sif:latest
+singularity pull gildas-latest-piic.sif oras://registry.lam.fr/abeelen/gildas/sif:latest-piic
+```
+
+The SIFs are no longer kept as job artifacts, so a pipeline does not
+archive hundreds of MiB. The job starts by removing `sifs/`, pushes each
+tag, then deletes the local SIF; a reused workspace therefore cannot
+accumulate old images. Set `SIF_TAGS` to build only a subset (default:
+`latest latest-piic`).
+
 Apptainer unpacks OCI layers into its temporary directory, and the PIIC
 image is too large for the runner's `/tmp`; the job therefore points
 `APPTAINER_TMPDIR` / `SINGULARITY_TMPDIR` and the caches at job-specific
@@ -164,11 +178,3 @@ directories under `$CI_PROJECT_DIR`, cleaned up on exit. Set
 `SIF_TMPDIR` / `SIF_CACHEDIR` to a larger scratch filesystem if the
 build volume is not big enough, and `SIF_MIN_FREE_GB` for a preflight
 space check.
-
-The job starts by removing `sifs/`, so the artifact contains only the
-tags built in that run — stale SIFs from an earlier workspace cannot
-inflate `artifacts.zip`. The default `SIF_TAGS` is `latest latest-piic`;
-those SIFs are roughly 253 MiB and 640 MiB, so the combined artifact is
-about 893 MiB. That is the actual payload (SIF is already compressed),
-not build temp or cache. Set `SIF_TAGS=latest` (or `latest-piic`) when
-only one image is needed and to keep the artifact smaller.

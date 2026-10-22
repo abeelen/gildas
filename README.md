@@ -94,11 +94,18 @@ singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest imager
 
 Prebuilt SIFs are published on the
 [sif-images](https://github.com/abeelen/gildas/releases/tag/sif-images)
-GitHub release (and mirrored as GitLab job artifacts via the manual
-`sif-build` job, for users without github.com access). To build your
-own, see [building](docs/building.md) — or generate the exact command
-with `./gildas_release.py --singularity` / `--native` (`--natif` is an
-alias).
+GitHub release. On the LAM GitLab instance the manual `sif-build` job
+also pushes them to the project container registry as `sif:<tag>` OCI
+artifacts (for users without github.com access):
+
+```bash
+singularity pull gildas-latest.sif oras://registry.lam.fr/abeelen/gildas/sif:latest
+singularity pull gildas-latest-piic.sif oras://registry.lam.fr/abeelen/gildas/sif:latest-piic
+```
+
+To build your own, see [building](docs/building.md) — or generate the
+exact command with `./gildas_release.py --singularity` / `--native`
+(`--natif` is an alias).
 
 Which invocations work depends on how the SIF was built, but both
 shipped kinds carry the full `%apprun` list (`defs/gildas-docker.def` and
