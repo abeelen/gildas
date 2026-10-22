@@ -139,6 +139,11 @@ labels (release, base, target, IMAGER/PIIC version and
 bundled component versions authoritatively (`none (not bundled)` when
 absent, e.g. because the upstream was unreachable at build time).
 
+SIFs converted from these images inherit the same `abeelen.gildas.*`
+labels, and native SIF builds write them from `%post`, so
+`docker inspect`, `singularity inspect -l` / `apptainer inspect -l`,
+and the `/etc` sentinels agree.
+
 ### Usage with Docker
 
 The `gildas_docker` alias from Quick start is the full recipe. The

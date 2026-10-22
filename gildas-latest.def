@@ -3,7 +3,7 @@ From: abeelen/gildas:latest
 
 %labels
     Author abeelen
-    Description "GILDAS Singularity image bootstrapped from abeelen/gildas:latest"
+    Description "GILDAS runtime converted from an abeelen/gildas Docker image"
 
 %environment
     # Use bash as default shell. The container's /etc/bash.bashrc,

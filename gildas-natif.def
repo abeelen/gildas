@@ -116,6 +116,8 @@ From: alpine:latest
     : "${IMAGER_VERSION:=last}"
     : "${IMAGER_URL:=https://share.oasu.u-bordeaux.fr/imager}"
     : "${WITH_IMAGER:=1}"
+    imager_version="${IMAGER_VERSION}"
+    imager_bundled="${WITH_IMAGER}"
     mkdir -p /imager-exe
     if [ "${WITH_IMAGER}" = "1" ]; then
         unset gagsrcdir gagexedir gagadmdir || true
@@ -155,10 +157,13 @@ From: alpine:latest
     # Optional PIIC installation (warns when the tarball is missing instead
     # of silently producing a GILDAS-only image)
     cd /
+    piic_version="${release}"
+    piic_bundled="0"
     if curl -fSL --retry 3 --connect-timeout 20 \
             "${piic_url}/piic-exe-${release}.tar.xz" -o "/tmp/piic-exe-${release}.tar.xz"; then
         tar xJf "/tmp/piic-exe-${release}.tar.xz" && rm -f "/tmp/piic-exe-${release}.tar.xz"
-        echo "${release}" > /etc/piic-version
+        piic_bundled="1"
+        echo "${piic_version}" > /etc/piic-version
     else
         echo "WARNING: no piic-exe-${release}.tar.xz at ${piic_url}, skipping PIIC" >&2
         echo "none (not bundled)" > /etc/piic-version
@@ -229,6 +234,32 @@ From: alpine:latest
 
     # Keep interactive shells working too
     cat /etc/gildas-env.sh >> /etc/bash.bashrc
+
+    # Mirror the Docker images' self-describing labels so native SIFs can be
+    # inspected the same way. Apptainer exports APPTAINER_LABELS;
+    # SingularityCE exports SINGULARITY_LABELS. The /etc/imager-version and
+    # /etc/piic-version files remain the authoritative record of what was
+    # actually bundled; the version labels record the requested build values,
+    # like the Docker images do.
+    labels="${APPTAINER_LABELS:-${SINGULARITY_LABELS:-}}"
+    if [ -n "${labels}" ]; then
+        target="gildas"
+        if [ "${piic_bundled}" = "1" ]; then target="gildas-piic"; fi
+        {
+            echo "org.opencontainers.image.title GILDAS (native alpine)"
+            echo "org.opencontainers.image.revision ${release}"
+            echo "org.opencontainers.image.source https://github.com/abeelen/gildas"
+            echo "abeelen.gildas.release ${release}"
+            echo "abeelen.gildas.base alpine"
+            echo "abeelen.gildas.target ${target}"
+            echo "abeelen.gildas.imager-version ${imager_version}"
+            echo "abeelen.gildas.imager-bundled ${imager_bundled}"
+            echo "abeelen.gildas.piic-version ${piic_version}"
+            echo "abeelen.gildas.piic-bundled ${piic_bundled}"
+        } >> "${labels}"
+    else
+        echo "WARNING: APPTAINER_LABELS/SINGULARITY_LABELS not set; native SIF labels not recorded" >&2
+    fi
 
     # Trim build-time dependencies to reduce final SIF size.
     apk del \

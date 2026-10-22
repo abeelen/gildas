@@ -65,6 +65,12 @@ authoritative). `WITH_PIIC=0` skips the download explicitly;
 records, so `gildas_release.py` can later detect a PIIC-less tag and
 rebuild it once the tarball appears.
 
+SIFs converted from these images inherit the same `abeelen.gildas.*`
+labels. Native SIF builds write them from `%post` as well (through
+`APPTAINER_LABELS` / `SINGULARITY_LABELS`), so the Docker, converted-SIF,
+and native-SIF labels use the same keys; the `/etc` files remain
+authoritative for what was actually bundled.
+
 To build the PIIC image for a given release (missing PIIC tarballs
 warn instead of silently producing a GILDAS-only image thanks to the
 `curl -fSL --retry` check):

@@ -46,3 +46,7 @@
   cache moved to job-specific directories under `$CI_PROJECT_DIR`
   (override with `SIF_TMPDIR` / `SIF_CACHEDIR`), cleaned on exit;
   `--disable-cache` and `--force` reduce peak space and make reruns safe
+- SIF label parity: Docker-converted SIFs inherit every
+  `abeelen.gildas.*` label, native SIF builds now write the same keys
+  from `%post`, and `gildas-latest.def` no longer claims the source is
+  always `abeelen/gildas:latest`
