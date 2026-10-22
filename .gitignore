@@ -1,5 +1,7 @@
 # Local Singularity images (built artifacts, not sources)
 *.sif
+# Generated per-tag SIF recipes (gildas_release.py --singularity)
+/gildas-*.def
 # Python bytecode and caches
 __pycache__/
 *.pyc

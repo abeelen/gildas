@@ -40,14 +40,14 @@ on:
       - Dockerfile.alpine
       - docker-entrypoint.sh
       - gildas_release.py
-      - "gildas-*.def"
+      - "defs/*.def"
   pull_request:
     paths:
       - Dockerfile
       - Dockerfile.alpine
       - docker-entrypoint.sh
       - gildas_release.py
-      - "gildas-*.def"
+      - "defs/*.def"
 
 env:
   DOCKER_BUILDKIT: 1

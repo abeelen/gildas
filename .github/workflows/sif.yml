@@ -8,8 +8,9 @@
 # tags are skipped with a warning instead of failing the job.
 #
 # Set the `natif` input to build a native SIF instead (newest release by
-# default, Alpine unless `debian` is set; `release` pins one explicitly).
-# Native assets accumulate per release name on the same rolling release.
+# default; native builds always use the Alpine recipe; `release` pins one
+# explicitly). Native assets accumulate per release name on the same
+# rolling release.
 # The Friday schedule also runs the native build, but only when its
 # asset is still missing (upstream tarballs are immutable).
 #
@@ -35,11 +36,6 @@ on:
         description: "GILDAS release for the native build (empty = newest)"
         required: false
         default: ""
-      debian:
-        description: "Native build from the Debian .def (default is Alpine)"
-        required: false
-        default: false
-        type: boolean
   schedule:
     - cron: "0 4 * * 5"
 
@@ -83,7 +79,7 @@ jobs:
             # SIF carries runscript + %apprun entries. Built as root via
             # sudo: the hosted runners forbid unprivileged mount
             # namespaces, so --fakeroot cannot work there.
-            sed "s|^From: .*|From: abeelen/gildas:$tag|" gildas-latest.def > /tmp/sif-build.def
+            sed "s|^From: .*|From: abeelen/gildas:$tag|" defs/gildas-docker.def > /tmp/sif-build.def
             sudo -E singularity build "$sif" /tmp/sif-build.def
             gh release upload sif-images "$sif" --clobber
             sudo rm -f "$sif"
@@ -104,18 +100,16 @@ jobs:
       - name: Resolve release and definition file
         id: sel
         run: |
-          DOCKERFILE="Dockerfile.alpine"
-          [ "${{ inputs.debian }}" = "true" ] && DOCKERFILE="Dockerfile"
-          SEL=$(NATIV_DOCKERFILE="$DOCKERFILE" NATIV_RELEASE="${{ inputs.release }}" python3 -c "
+          SEL=$(NATIV_RELEASE="${{ inputs.release }}" python3 -c "
           import os
           from gildas_release import get_natif_commands, _release_sort_key, _load_release_sets
           sets = _load_release_sets()
-          cmds = get_natif_commands(sets=sets, dockerfile=os.environ['NATIV_DOCKERFILE'])
+          cmds = get_natif_commands(sets=sets, dockerfile='Dockerfile.alpine')
           rel = os.environ.get('NATIV_RELEASE', '').strip()
           pick = next((c for c in cmds if c.release == rel), None) if rel else None
           if rel and pick is None:
               sets = _load_release_sets(include_archive=True)
-              cmds = get_natif_commands(sets=sets, dockerfile=os.environ['NATIV_DOCKERFILE'])
+              cmds = get_natif_commands(sets=sets, dockerfile='Dockerfile.alpine')
               pick = next((c for c in cmds if c.release == rel), None)
           if rel and pick is None:
               raise SystemExit(f\"release '{rel}' not buildable natively\")

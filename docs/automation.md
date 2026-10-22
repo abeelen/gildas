@@ -38,19 +38,21 @@ releases lag behind GILDAS ones — see `--piic`).
 # always tagging `latest`.
 ./gildas_release.py --release jan26a
 
-# Singularity: emit `singularity build ... gildas-latest.def` commands
-# (From: rewritten per tag, lists all known releases)
+# Singularity: emit `singularity build ... defs/gildas-docker.def`
+# commands (From: rewritten per tag, lists all known releases)
 ./gildas_release.py --singularity
 ./gildas_release.py --singularity --debian
 ./gildas_release.py --release jan26a --singularity
 
-# Singularity, native path: emit `singularity build ... .def` commands
-# (one per release, PIIC bundled when available, archive URLs included
-# when needed — needs root or --fakeroot to run; Alpine `.def` by default)
+# Singularity, native path: emit `singularity build ...
+# defs/gildas-native-alpine.def` commands (one per release, PIIC bundled
+# when available, archive URLs included when needed — needs root or
+# --fakeroot to run; native builds are Alpine-only)
+./gildas_release.py --native
+./gildas_release.py --native --archive
+./gildas_release.py --release jan26a --native
+# `--natif` is kept as an alias for `--native`.
 ./gildas_release.py --natif
-./gildas_release.py --natif --debian
-./gildas_release.py --natif --archive
-./gildas_release.py --release jan26a --natif
 
 # Debian variants and direct execution
 ./gildas_release.py --debian
@@ -109,7 +111,7 @@ Debian families in parallel):
 
 - weekly schedule: builds and pushes whatever is missing on Docker Hub;
 - recipe push (`Dockerfile*`, `docker-entrypoint.sh`, `gildas_release.py`,
-  `gildas-*.def`): rebuilds on top of the new recipes;
+  `defs/*.def`): rebuilds on top of the new recipes;
 - manual dispatch (`Run workflow`, optional `release` / `debian` /
   `piic` / `archive` inputs);
 - pull requests: print-only plan, no build, no push.
@@ -134,7 +136,7 @@ gh release download sif-images -R abeelen/gildas -p 'gildas-*.sif'
 
 The same workflow builds one native SIF from the tarballs on demand
 (manual dispatch with the `natif` input: newest release by default,
-Alpine unless `debian` is set, `release` pins one explicitly, archived
+always the Alpine recipe, `release` pins one explicitly, archived
 releases included automatically) and on schedule whenever its asset is
 still missing. Native assets accumulate per release name on the same
 rolling release; the `.def` files remain the manual path for anything
@@ -162,3 +164,11 @@ directories under `$CI_PROJECT_DIR`, cleaned up on exit. Set
 `SIF_TMPDIR` / `SIF_CACHEDIR` to a larger scratch filesystem if the
 build volume is not big enough, and `SIF_MIN_FREE_GB` for a preflight
 space check.
+
+The job starts by removing `sifs/`, so the artifact contains only the
+tags built in that run — stale SIFs from an earlier workspace cannot
+inflate `artifacts.zip`. The default `SIF_TAGS` is `latest latest-piic`;
+those SIFs are roughly 253 MiB and 640 MiB, so the combined artifact is
+about 893 MiB. That is the actual payload (SIF is already compressed),
+not build temp or cache. Set `SIF_TAGS=latest` (or `latest-piic`) when
+only one image is needed and to keep the artifact smaller.

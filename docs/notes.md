@@ -77,8 +77,8 @@ Workarounds for pre-fix images: interact through an inner shell
 
 - Host env never reaches `%post`: only `SINGULARITYENV_*` propagates
   (verified with a minimal def). Plain `VAR=...` prefixes are silently
-  dropped, then `set -u` aborts — `gildas-natif-alpine.def` was missing
-  the `:=` defaults that `gildas-natif.def` had.
+  dropped, then `set -u` aborts — the Alpine native recipe was missing
+  the `:=` defaults that the older recipe had.
 - Never glob `/tmp` or `/var/tmp` in `%post` cleanup: under
   `singularity build` those hold the builder's own busy mounts and `rm`
   aborts on them (killed a full compile at the trim step; reproduced

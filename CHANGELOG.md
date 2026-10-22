@@ -13,10 +13,13 @@
 - Self-describing images (`abeelen.gildas.*` labels,
   `/etc/imager-version` / `/etc/piic-version`) and IMAGER-drift
   self-healing rebuilds (`last` resolved to a concrete version)
-- `gildas_release.py` overhaul: release/imager coupling, `--natif`,
-  `--singularity`, per-family `latest` tags, `--execute --log-dir`,
-  offline pytest suite; simplified (dropped `--json`,
-  `--repo`/`--dockerfile`, `--no-tag-latest`)
+- `gildas_release.py` overhaul: release/imager coupling, `--native`
+  (`--natif` alias), `--singularity`, per-family `latest` tags,
+  `--execute --log-dir`, offline pytest suite; simplified (dropped
+  `--json`, `--repo`/`--dockerfile`, `--no-tag-latest`)
+- SIF recipes grouped under `defs/`: `gildas-docker.def` (Docker Hub
+  bootstrap) and `gildas-native-alpine.def` (tarball build); native SIFs
+  now use `gildas-<release>[-piic]-native-alpine.sif`
 - CI: GitHub Actions + GitLab pipeline (scheduled, manual, print-only
   plans), SIF publishing to a rolling release plus GitLab artifacts
   mirror; native SIF builds require `SINGULARITYENV_*`, no `/tmp` globs
@@ -27,8 +30,8 @@
   when stdin is a tty, `kill(0)` cleanup semantics untouched
 ### Fixed
 - `clic` ungated from the upstream `GAG_USE_SANITIZE` build gate;
-  `gildas-natif.def` parity with `Dockerfile`; `latest`/`latest-piic`
-  tracked per family
+  `defs/gildas-native-alpine.def` parity with `Dockerfile`;
+  `latest`/`latest-piic` tracked per family
 - IMAGER upstream outage no longer aborts builds: `gildas_release.py`
   skips IMAGER (`IMAGER_VERSION=none`, `WITH_IMAGER=0`) when
   `share.oasu.u-bordeaux.fr` is unreachable, records it in the
@@ -46,7 +49,10 @@
   cache moved to job-specific directories under `$CI_PROJECT_DIR`
   (override with `SIF_TMPDIR` / `SIF_CACHEDIR`), cleaned on exit;
   `--disable-cache` and `--force` reduce peak space and make reruns safe
+- GitLab `sif-build` clears `sifs/` before building and logs the per-file
+  and total sizes, so `artifacts.zip` contains only the current
+  `SIF_TAGS` rather than any stale SIFs left in a reused workspace
 - SIF label parity: Docker-converted SIFs inherit every
   `abeelen.gildas.*` label, native SIF builds now write the same keys
-  from `%post`, and `gildas-latest.def` no longer claims the source is
-  always `abeelen/gildas:latest`
+  from `%post`, and `defs/gildas-docker.def` no longer claims the source
+  is always `abeelen/gildas:latest`

@@ -256,17 +256,21 @@ def test_natif_command_bundles_piic_when_available():
     assert cmd is not None and cmd.has_piic
     assert "PIIC_URL=https://www.iram.fr/~gildas/dist/archive/piic" not in cmd.command
     assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd.command
-    assert "gildas-natif.def" in cmd.command
+    assert "defs/gildas-native-alpine.def" in cmd.command
+    assert "gildas-jul26a-piic-native-alpine.sif" in cmd.command
     cmd = natif_command("oct26a", sets, imager_version="oct26")
     assert cmd is not None and not cmd.has_piic
+    assert "gildas-oct26a-native-alpine.sif" in cmd.command
     assert natif_command("nosuch", sets) is None
 
 
-def test_natif_debian_deffile():
+def test_natif_always_uses_alpine_recipe():
     sets = make_sets()
     cmd = natif_command("oct26a", sets, dockerfile="Dockerfile", imager_version="oct26")
-    assert cmd is not None and "gildas-natif.def" in cmd.command
-    assert "alpine" not in cmd.command
+    assert cmd is not None and cmd.alpine is True
+    assert "defs/gildas-native-alpine.def" in cmd.command
+    assert "gildas-oct26a-native-alpine.sif" in cmd.command
+    assert "-natif" not in cmd.command
 
 
 def test_natif_commands_follow_loaded_sets():
@@ -280,7 +284,8 @@ def test_natif_commands_follow_loaded_sets():
 
 def test_singularity_command(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "gildas-latest.def").write_text(
+    (tmp_path / "defs").mkdir()
+    (tmp_path / "defs" / "gildas-docker.def").write_text(
         "Bootstrap: docker\nFrom: abeelen/gildas:latest\n"
     )
     cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)
@@ -514,8 +519,9 @@ def test_run_logged_passthrough(capfd):
 def test_natif_tag():
     from gildas_release import NatifCommand, _natif_tag
 
-    assert _natif_tag(NatifCommand("r", True, "c", True, "i")) == "r-natif-alpine"
-    assert _natif_tag(NatifCommand("r", True, "c", False, "i")) == "r-natif"
+    assert _natif_tag(NatifCommand("r", True, "c", True, "i")) == "r-piic-native-alpine"
+    assert _natif_tag(NatifCommand("r", False, "c", True, "i")) == "r-native-alpine"
+    assert _natif_tag(NatifCommand("r", True, "c", False, "i")) == "r-piic-native-debian"
 
 
 def test_execute_log_paths(monkeypatch, tmp_path):

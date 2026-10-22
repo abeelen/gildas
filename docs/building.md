@@ -125,30 +125,34 @@ curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags'
 
 | Method | Command | Pros | Cons |
 |--------|---------|------|------|
-| From Docker Hub (`gildas-latest.def`) | `sed "s\|^From: .*\|From: abeelen/gildas:jan26a-alpine\|" gildas-latest.def > /tmp/sif-build.def && singularity build gildas-jan26a-alpine.sif /tmp/sif-build.def` (`./gildas_release.py --singularity`) | fast, no compiler needed, runscript + `%apprun` kept | needs the Docker tag to exist |
-| Native (`gildas-natif.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif.sif gildas-natif.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable | full recompile (~slow), needs root or `--fakeroot` |
-| Native Alpine (`gildas-natif-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-natif-alpine.sif gildas-natif-alpine.def` | no Docker involved, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
+| From Docker Hub (`defs/gildas-docker.def`) | `sed "s\|^From: .*\|From: abeelen/gildas:jan26a-alpine\|" defs/gildas-docker.def > /tmp/sif-build.def && singularity build gildas-jan26a-alpine.sif /tmp/sif-build.def` (`./gildas_release.py --singularity`) | fast, no compiler needed, runscript + `%apprun` kept | needs the Docker tag to exist |
+| Native Alpine (`defs/gildas-native-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-native-alpine.sif defs/gildas-native-alpine.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
+
+There is only one native recipe (Alpine). The Docker-converted path
+keeps the Docker tag in the filename (`gildas-<tag>.sif`); native SIFs
+use `gildas-<release>[-piic]-native-alpine.sif`, with `-piic` added when
+the PIIC tarball was available and bundled.
 
 ```bash
 # Native build from tarballs (no Docker involved), with configurable
-# release and URLs (see %environment in gildas-natif.def).
+# release and URLs (see %environment in defs/gildas-native-alpine.def).
 # NOTE: SINGULARITYENV_ prefix is mandatory, plain VAR=... never reaches
-# %post (silently dropped). Easiest: use `./gildas_release.py --natif`,
-# which generates the right command (IMAGER pinned, archive URLs added).
+# %post (silently dropped). Easiest: use `./gildas_release.py --native`
+# (`--natif` is an alias), which generates the right command (IMAGER
+# pinned, archive URLs added) and the matching output filename.
 export SINGULARITYENV_GILDAS_RELEASE=jan26a
 export SINGULARITYENV_GILDAS_URL=https://www.iram.fr/~gildas/dist
 export SINGULARITYENV_PIIC_URL=https://www.iram.fr/~gildas/dist
 export SINGULARITYENV_MAKE_JOBS=$(nproc)
 # export SINGULARITYENV_WITH_TEXLIVE=1  # only if you need the pipeline (texlive in image)
-sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-natif.sif gildas-natif.def
-
-# Native Alpine build (musl patches from Dockerfile.alpine included)
-sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-natif-alpine.sif gildas-natif-alpine.def
+sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-native-alpine.sif defs/gildas-native-alpine.def
+# If PIIC was bundled, use the convention ...-piic-native-alpine.sif.
 ```
 
-The `.def` recipes mirror the Dockerfiles: `gildas-latest.def` bootstraps
-from Docker Hub (runscript + `%apprun` shortcuts), `gildas-natif*.def`
-compile from tarballs (PIIC bundled when its tarball exists upstream).
+The `.def` recipes mirror the Dockerfiles: `defs/gildas-docker.def`
+bootstraps from Docker Hub (runscript + `%apprun` shortcuts),
+`defs/gildas-native-alpine.def` compiles from tarballs (PIIC bundled when
+its tarball exists upstream).
 
 Never glob `/tmp` or `/var/tmp` in `%post` cleanup: under
 `singularity build` those hold the builder's own busy mounts and `rm`

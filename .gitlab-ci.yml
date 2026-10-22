@@ -113,7 +113,7 @@ sif-build:
   # Build the SIFs directly on the `apptainer` runner, for users who can
   # reach gitlab.lam.fr. The runner has no Docker: apptainer pulls the
   # image from the GitLab Container Registry instead. The per-tag def
-  # file rewrites `From:` on gildas-latest.def. Manual only.
+  # file rewrites `From:` on defs/gildas-docker.def. Manual only.
   stage: publish
   tags: [apptainer]
   timeout: 6h
@@ -148,6 +148,10 @@ sif-build:
       export APPTAINER_CACHEDIR="$build_cache"
       export SINGULARITY_CACHEDIR="$build_cache"
       export TMPDIR="$build_tmp"
+      # The runner may reuse the workspace, and sifs/ is archived wholesale.
+      # Start clean so artifacts.zip contains only the tags built this run
+      # (otherwise old SIFs inflate it by hundreds of MiB).
+      rm -rf sifs
       mkdir -p "$build_tmp" "$build_cache" sifs
 
       tmp_def=""
@@ -177,15 +181,17 @@ sif-build:
       fi
       "$builder" --version
 
+      # Default is both rolling tags: ~253 MiB (latest) + ~640 MiB
+      # (latest-piic), so artifacts.zip is ~893 MiB before GitLab's zip
+      # pass. That is the SIF payload, not temp/cache. Set SIF_TAGS to a
+      # single tag when only one artifact is needed, e.g. SIF_TAGS=latest.
       for tag in ${SIF_TAGS:-latest latest-piic}; do
-        # Build the per-tag def from gildas-latest.def. Write to a temp file:
-        # when tag == latest, `def` equals the source file itself, and
-        # redirecting `> "${def}"` would truncate the input before sed reads
-        # it, leaving an empty definition ("no stages found in definition
-        # file").
+        # Build the per-tag def from defs/gildas-docker.def. Write to a temp
+        # file: when tag == latest, the source is not the destination, but
+        # keeping the rewrite in the build temp avoids clobbering it.
         tmp_def="$(mktemp -p "$build_tmp" gildas-def.XXXXXX)"
         : "${CI_REGISTRY_IMAGE:?CI_REGISTRY_IMAGE is not set}"
-        sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" gildas-latest.def > "${tmp_def}"
+        sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" defs/gildas-docker.def > "${tmp_def}"
         echo "Building gildas-${tag} from ${CI_REGISTRY_IMAGE}:${tag} ..."
         # --disable-cache keeps the compressed OCI layers out of the build
         # volume: the uncompressed rootfs alone is already the peak user.
@@ -194,6 +200,10 @@ sif-build:
         rm -f "${tmp_def}"
         tmp_def=""
       done
+
+      echo "SIF artifacts:"
+      ls -lh sifs/
+      echo "Total SIF payload: $(du -sh sifs | cut -f1)"
   artifacts:
     paths: [sifs/]
     expire_in: never

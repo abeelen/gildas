@@ -25,8 +25,8 @@ IMAGER_LAST = "last"
 IMAGER_NONE = "none"  # sentinel: IMAGER deliberately not bundled (upstream unavailable)
 PIIC_NONE = "none"  # sentinel: PIIC deliberately not bundled (upstream unavailable)
 REQUEST_TIMEOUT = 30
-LATEST_DEF = "gildas-latest.def"
-NATIF_DEF = "gildas-natif.def"
+DOCKER_DEF = "defs/gildas-docker.def"
+NATIVE_DEF = "defs/gildas-native-alpine.def"
 
 logger = logging.getLogger(__name__)
 SECTION_WITHOUT_PIIC = "without-piic"
@@ -417,7 +417,9 @@ def _image_tag(cmd: BuildCommand) -> str:
 
 
 def _natif_tag(cmd: NatifCommand) -> str:
-    return f"{cmd.release}-natif-alpine" if cmd.alpine else f"{cmd.release}-natif"
+    base = "alpine" if cmd.alpine else "debian"
+    piic = "-piic" if cmd.has_piic else ""
+    return f"{cmd.release}{piic}-native-{base}"
 
 
 def _docker_build_push(main_tag, latest_tag, middle, dockerfile, tag_latest, alias=None) -> str:
@@ -592,7 +594,8 @@ def natif_command(release, sets, dockerfile="Dockerfile.alpine", imager_version=
     sets : ReleaseSets
         Upstream state.
     dockerfile : str, optional
-        Dockerfile variant (selects base).
+        Dockerfile variant. Native builds currently only have an Alpine
+        recipe, so this is accepted for API compatibility.
     imager_version : str or None, optional
         Pinned IMAGER version.
 
@@ -612,9 +615,12 @@ def natif_command(release, sets, dockerfile="Dockerfile.alpine", imager_version=
         env.append(f"SINGULARITYENV_GILDAS_URL={GILDAS_ARCHIVE_URL}")
     if has_piic and release not in sets.piic:
         env.append(f"SINGULARITYENV_PIIC_URL={PIIC_ARCHIVE_URL}")
-    alpine = dockerfile.endswith("alpine")
-    sif = f"gildas-{release}-natif-alpine.sif" if alpine else f"gildas-{release}-natif.sif"
-    return NatifCommand(release, has_piic, f"{' '.join(env)} singularity build {sif} {NATIF_DEF}", alpine, imager_version)
+    # The only native recipe is Alpine. Keep the dockerfile argument for
+    # API compatibility, but do not invent a Debian native artifact.
+    alpine = True
+    piic = "-piic" if has_piic else ""
+    sif = f"gildas-{release}{piic}-native-alpine.sif"
+    return NatifCommand(release, has_piic, f"{' '.join(env)} singularity build {sif} {NATIVE_DEF}", alpine, imager_version)
 
 
 def get_natif_commands(dockerfile="Dockerfile.alpine", include_archive=False, archive_gildas=False, sets=None, imager_version=None) -> List[NatifCommand]:
@@ -639,8 +645,8 @@ def get_natif_commands(dockerfile="Dockerfile.alpine", include_archive=False, ar
     return [c for rel in sets.all_releases() if (c := natif_command(rel, sets, dockerfile, imager_version))]
 
 
-def singularity_command(cmd: BuildCommand, deffile: str = LATEST_DEF) -> str:
-    """Return a SIF build command via ``gildas-latest.def``.
+def singularity_command(cmd: BuildCommand, deffile: str = DOCKER_DEF) -> str:
+    """Return a SIF build command via ``defs/gildas-docker.def``.
 
     Parameters
     ----------
@@ -657,12 +663,13 @@ def singularity_command(cmd: BuildCommand, deffile: str = LATEST_DEF) -> str:
     tag = _image_tag(cmd)
     image = DOCKER_REPO.split("/")[-1]
     sif = f"{image}-{tag}.sif"
-    # Generate a per-tag def file next to the source recipe instead of
+    # Generate a per-tag def file in the working directory instead of
     # rewriting to a fixed /tmp path via sed (racy, clobbers concurrent
-    # builds, and fails when /tmp is not shared with the build).
+    # builds, and fails when /tmp is not shared with the build). Keep it
+    # out of defs/ so the recipe directory stays source-only.
     src = Path(deffile)
-    dest = src.parent / f"gildas-{tag}.def"
-    # Fallback: source recipe lives in cwd; keep generated file in cwd too.
+    dest = Path(f"gildas-{tag}.def")
+    # Missing/unreadable recipe falls back to a direct docker:// build below.
     if src.exists():
         try:
             text = src.read_text()
@@ -696,7 +703,8 @@ def _format_comment(cmd: BuildCommand) -> str:
 
 
 def _format_natif_comment(cmd: NatifCommand) -> str:
-    return f"# * {_natif_tag(cmd)}{' (+piic bundled)' if cmd.has_piic else ' (no piic upstream)'} [imager {cmd.imager_version}]"
+    state = "piic bundled" if cmd.has_piic else "no piic upstream"
+    return f"# * {_natif_tag(cmd)} [{state}; imager {cmd.imager_version}]"
 
 
 def _run_logged(command: str, log_path: str | None = None, tail: int = 15) -> None:
@@ -774,9 +782,9 @@ def print_missing_build_commands(force=False, dockerfile="Dockerfile.alpine", ex
     include_archive, archive_gildas : bool, optional
         Consider archived releases.
     singularity : bool, optional
-        Emit SIF builds via ``gildas-latest.def``.
+        Emit SIF builds via ``defs/gildas-docker.def``.
     natif : bool, optional
-        Emit native SIF builds.
+        Emit native SIF builds via ``defs/gildas-native-alpine.def``.
     imager_version : str or None, optional
         Pinned IMAGER version.
     piic_only : bool, optional
@@ -793,11 +801,11 @@ def print_missing_build_commands(force=False, dockerfile="Dockerfile.alpine", ex
 @click.option("--release", "release_name", default=None, help="Specific release (e.g. jan26a). Omit for all missing.")
 @click.option("-v", "--verbose", count=True, help="Verbosity (-v/-vv).")
 @click.option("-f", "--force", is_flag=True, help="Include releases already on Hub.")
-@click.option("--debian", is_flag=True, help="Debian Dockerfile (default Alpine).")
+@click.option("--debian", is_flag=True, help="Debian Dockerfile (default Alpine). Native SIFs are Alpine-only.")
 @click.option("--piic", "piic_only", is_flag=True, help="Only PIIC commands.")
 @click.option("--archive", "include_archive", is_flag=True, default=False, help="Include archived releases.")
-@click.option("--singularity", "singularity", is_flag=True, default=False, help="Emit singularity builds via gildas-latest.def (From: rewritten per tag).")
-@click.option("--natif", "natif", is_flag=True, default=False, help="Emit native singularity builds (.def from tarballs).")
+@click.option("--singularity", "singularity", is_flag=True, default=False, help="Emit singularity builds via defs/gildas-docker.def (From: rewritten per tag).")
+@click.option("--natif", "--native", "natif", is_flag=True, default=False, help="Emit native singularity builds via defs/gildas-native-alpine.def (tarballs).")
 @click.option("--imager-version", "imager_version", default=None, help="Pin IMAGER version (default auto-mapped; 'none' skips IMAGER; auto-skips when upstream is unreachable).")
 @click.option("--execute", is_flag=True, help="Run commands instead of printing.")
 @click.option("--log-dir", "log_dir", default=None, help="With --execute, tee output to <dir>/<tag>.log.")
@@ -821,6 +829,8 @@ def main(release_name=None, verbose=0, force=False, debian=False, piic_only=Fals
     """
     logging.basicConfig(level=[logging.WARNING, logging.INFO, logging.DEBUG][min(verbose, 2)], format="%(levelname)s:%(name)s:%(message)s")
     dockerfile = "Dockerfile" if debian else "Dockerfile.alpine"
+    if natif and debian:
+        logger.warning("--debian has no native equivalent; using the Alpine native recipe")
     archive_gildas = include_archive or piic_only
     if not release_name:
         return print_missing_build_commands(force, dockerfile, execute, include_archive, singularity, natif, imager_version, piic_only, archive_gildas, log_dir)
@@ -831,7 +841,7 @@ def main(release_name=None, verbose=0, force=False, debian=False, piic_only=Fals
         c = natif_command(release_name, sets, dockerfile, imager_version)
         if c is None or (piic_only and not c.has_piic):
             return
-        print("# Natif (from tarballs, PIIC bundled when available)")
+        print("# Native Alpine (from tarballs, PIIC bundled when available)")
         return _emit([(_format_natif_comment(c), c.command, c)], execute, (lambda o: str(Path(log_dir) / f"{_natif_tag(o)}.log")) if log_dir and execute else None)
     _print_command_sections(get_release_build_commands(release_name, False, dockerfile, True, sets, True, include_archive, archive_gildas, imager_version), singularity, execute, piic_only, log_dir)
 
