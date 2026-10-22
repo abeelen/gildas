@@ -2,6 +2,7 @@
 """Build/print docker & singularity commands for GILDAS releases."""
 import functools
 import logging
+import os
 import re
 import shlex
 import subprocess
@@ -30,6 +31,20 @@ NATIF_DEF = "gildas-natif.def"
 logger = logging.getLogger(__name__)
 SECTION_WITHOUT_PIIC = "without-piic"
 SECTION_WITH_PIIC = "with-piic"
+
+
+def _ci_warning(title: str, message: str) -> None:
+    """Surface a non-fatal warning in CI.
+
+    GitHub Actions renders ``::warning`` as a run/PR annotation; GitLab has
+    no annotation API, so emit a colored ``WARNING:`` line in the job log.
+    """
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        print(f"::warning title={title}::{message}", flush=True)
+    elif os.environ.get("GITLAB_CI") == "true":
+        print(f"\033[33mWARNING: {title}: {message}\033[0m", flush=True)
+    else:
+        print(f"WARNING: {title}: {message}", flush=True)
 
 
 def _anchors(url: str) -> List[str]:
@@ -107,7 +122,10 @@ def _cached_imager_versions() -> tuple | None:
     try:
         return tuple(imager_release())
     except Exception as exc:  # network errors must never block image builds
-        logger.warning("Could not list IMAGER versions from %s (%s); building without IMAGER", IMAGER_URL, exc)
+        msg = (f"Could not list IMAGER versions from {IMAGER_URL} ({exc}); "
+               f"images will be built with IMAGER_VERSION={IMAGER_NONE} and WITH_IMAGER=0.")
+        logger.warning(msg)
+        _ci_warning("IMAGER not bundled", msg)
         return None
 
 
@@ -321,7 +339,10 @@ def _load_release_sets_uncached(include_archive=False, archive_gildas=False) -> 
             try:
                 return result(key)
             except Exception as exc:  # PIIC outage must not block GILDAS builds
-                logger.warning("Could not list PIIC releases (%s); treating PIIC as unavailable", exc)
+                msg = (f"Could not list PIIC releases ({exc}); "
+                       "PIIC will not be bundled in this run.")
+                logger.warning(msg)
+                _ci_warning("PIIC not bundled", msg)
                 return []
 
         return ReleaseSets(result("tags"), result("gildas"), result("ag"), piic_result("piic"), piic_result("ap"))

@@ -39,3 +39,6 @@
   `piic-bundled` plus `none (not bundled)` in `/etc/piic-version`, and
   tags built without PIIC are rebuilt once the release reappears
   upstream
+- Fail-open IMAGER/PIIC outages now surface as CI warnings: GitHub
+  Actions annotations (`::warning title=…`) and colored `WARNING:` lines
+  in GitLab job logs

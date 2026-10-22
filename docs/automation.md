@@ -71,8 +71,12 @@ carry the `abeelen.gildas.imager-version="none"` /
 `abeelen.gildas.imager-bundled="0"` labels and `/etc/imager-version`
 reads `none (not bundled)`, which is how a later run detects them. Once
 the upstream answers again, the drift check rebuilds those tags with
-IMAGER. Pass `--imager-version none` to skip IMAGER explicitly, or a
-concrete version like `oct26` to pin it without querying upstream.
+IMAGER. Fail-open is never silent: the script emits a CI warning —
+a `::warning title=IMAGER not bundled::` annotation on GitHub Actions
+and a yellow `WARNING: IMAGER not bundled: …` line in the GitLab job
+log (GitLab has no annotation API). Pass `--imager-version none` to
+skip IMAGER explicitly, or a concrete version like `oct26` to pin it
+without querying upstream.
 
 Missing-tag detection also covers IMAGER and PIIC drift, for main-tree
 releases: the script compares the expected IMAGER version against the
@@ -88,9 +92,11 @@ archived releases are immutable snapshots matched by tag existence only.
 
 PIIC listing is fail-open too: when `www.iram.fr` cannot be reached for
 the PIIC tree, the script logs a warning and emits GILDAS-only commands
-instead of aborting; `-piic` tags are then built on the next run that can
-read the listing. The PIIC download inside the Dockerfile was already
-fail-open and now writes `none (not bundled)` to `/etc/piic-version`.
+instead of aborting; the same GitHub/GitLab CI warning mechanism as
+IMAGER marks the run. `-piic` tags are then built on the next run that
+can read the listing. The PIIC download inside the Dockerfile was
+already fail-open and now writes `none (not bundled)` to
+`/etc/piic-version`.
 
 With `--execute --log-dir logs`, each build tees full output to
 `logs/<tag>.log` and prints only the tail. `tests/` covers the tag,

@@ -70,6 +70,59 @@ def test_cached_imager_versions_fail_open(monkeypatch):
         gr._cached_imager_versions.cache_clear()
 
 
+def test_ci_warning_github_annotation(monkeypatch, capsys):
+    import gildas_release as gr
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    gr._ci_warning("IMAGER not bundled", "upstream unreachable")
+
+    out = capsys.readouterr().out
+    assert out.startswith("::warning title=IMAGER not bundled::")
+    assert "upstream unreachable" in out
+
+
+def test_ci_warning_gitlab_log(monkeypatch, capsys):
+    import gildas_release as gr
+
+    monkeypatch.setenv("GITLAB_CI", "true")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    gr._ci_warning("PIIC not bundled", "listing failed")
+
+    out = capsys.readouterr().out
+    assert "WARNING: PIIC not bundled: listing failed" in out
+
+
+def test_ci_warning_plain_terminal(monkeypatch, capsys):
+    import gildas_release as gr
+
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    gr._ci_warning("IMAGER not bundled", "offline")
+
+    assert capsys.readouterr().out == "WARNING: IMAGER not bundled: offline\n"
+
+
+def test_imager_listing_failure_emits_ci_warning(monkeypatch, capsys):
+    import gildas_release as gr
+
+    def down():
+        raise OSError("upstream unreachable")
+
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.setattr(gr, "imager_release", down)
+    gr._cached_imager_versions.cache_clear()
+    try:
+        assert gr._cached_imager_versions() is None
+    finally:
+        gr._cached_imager_versions.cache_clear()
+
+    out = capsys.readouterr().out
+    assert "::warning title=IMAGER not bundled::" in out
+    assert "IMAGER_VERSION=none" in out
+
+
 def test_imager_lookup_failure_skips_imager_without_second_request(monkeypatch):
     import gildas_release as gr
 
@@ -338,7 +391,7 @@ def test_piic_stale_matrix(monkeypatch):
         assert gr._piic_stale("jul26a-piic-alpine", expected) is stale
 
 
-def test_piic_listing_failure_is_fail_open(monkeypatch):
+def test_piic_listing_failure_is_fail_open(monkeypatch, capsys):
     import gildas_release as gr
 
     def fake(package, archive=False):
@@ -346,11 +399,14 @@ def test_piic_listing_failure_is_fail_open(monkeypatch):
             raise OSError("upstream unreachable")
         return ["oct26a"]
 
+    monkeypatch.setenv("GITLAB_CI", "true")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.setattr(gr, "gildas_release", fake)
     monkeypatch.setattr(gr, "_docker_tags", lambda: [])
     sets = gr._load_release_sets_uncached()
     assert sets.gildas == ["oct26a"]
     assert sets.piic == [] and sets.archived_piic == []
+    assert "WARNING: PIIC not bundled:" in capsys.readouterr().out
 
 
 def test_missing_piic_tag_is_rebuilt_when_piic_returns(monkeypatch):
