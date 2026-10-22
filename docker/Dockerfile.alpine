@@ -2,15 +2,16 @@
 FROM alpine:latest AS gildas_worker
 
 # This Dockerfile builds the (default) Alpine-based abeelen/gildas images.
-# Debian images are the opt-in variant built from Dockerfile (`-debian` tags).
+# Debian images are the opt-in variant built from docker/Dockerfile.debian
+# (`-debian` tags).
 #
 # Recommended tags when building:
-#   docker build -f Dockerfile.alpine \
+#   docker build -f docker/Dockerfile.alpine \
 #     --target gildas \
 #     --build-arg release=jan26a \
 #     -t abeelen/gildas:jan26a .
 #
-#   docker build -f Dockerfile.alpine \
+#   docker build -f docker/Dockerfile.alpine \
 #     --target gildas-piic \
 #     --build-arg release=jan26a \
 #     -t abeelen/gildas:jan26a-piic .
@@ -18,27 +19,12 @@ FROM alpine:latest AS gildas_worker
 # Add `-t abeelen/gildas:latest` / `-t abeelen/gildas:latest-piic` for the
 # newest release (`gildas_release.py` does all of this automatically).
 
-# Tracking alpine:latest (rolling). Only
-# cfitsio comes from edge/testing.
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
+# Tracking alpine:latest (rolling). Only cfitsio comes from edge/testing.
+# The package list is shared with apptainer/gildas-native-alpine.def.
+RUN --mount=type=bind,source=packages/alpine-runtime.txt,target=/tmp/alpine-runtime.txt \
+    --mount=type=cache,target=/var/cache/apk,sharing=locked \
     echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
-    apk add --no-cache \
-    bash \
-    curl \
-    libx11 \
-    libpng \
-    fftw \
-    gtk+2.0 \
-    python3 \
-    ipython \
-    py3-pip \
-    py3-numpy \
-    py3-scipy \
-    py3-emcee \
-    py3-matplotlib \
-    cfitsio@testing \
-    libgomp \
-    gcompat
+    apk add --no-cache $(cat /tmp/alpine-runtime.txt)
 
 # No py3-astropy in Alpine repos (checked on 3.24): install via pip.
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -50,20 +36,10 @@ LABEL org.opencontainers.image.title="GILDAS runtime (alpine)" \
 
 FROM gildas_worker AS gildas_builder
 
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    apk add --no-cache \
-    libx11-dev \
-    libpng-dev \
-    fftw-dev \
-    cfitsio-dev@testing \
-    python3-dev \
-    gtk+2.0-dev \
-    gfortran \
-    groff \
-    build-base \
-    linux-headers \
-    ccache \
-    patch
+# Same shared build list as the native recipe; ccache is Docker-only.
+RUN --mount=type=bind,source=packages/alpine-build.txt,target=/tmp/alpine-build.txt \
+    --mount=type=cache,target=/var/cache/apk,sharing=locked \
+    apk add --no-cache $(cat /tmp/alpine-build.txt) ccache
 
 ENV PATH="/usr/lib/ccache/bin:${PATH}" \
     CC="ccache gcc" \
@@ -177,52 +153,21 @@ COPY --from=builder /etc/imager-version /etc/imager-version
 SHELL ["/bin/bash", "-c"]
 
 # Do not hardcode x86_64-alpineX.Y (musl layout differs from glibc):
-# detect at build time, re-resolve at container start.
-RUN set -eu -o pipefail; \
-    CANDIDATE="$(ls -1 /gildas-exe-$release/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
-    if [ -z "$CANDIDATE" ]; then CANDIDATE='x86_64-generic'; fi; \
-    echo "$CANDIDATE" > /etc/gildas-exec-system; \
-    GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-    cat > /etc/gildas-env.sh <<EOF
-# Gildas base environment
-export GAG_ROOT_DIR=/gildas-exe-$release
-export GAG_EXEC_SYSTEM=$GAG_EXEC_SYSTEM
-if [ -f \$GAG_ROOT_DIR/etc/bash_profile ]; then
-  . \$GAG_ROOT_DIR/etc/bash_profile
-fi
-if [ ! -d "\$GAG_ROOT_DIR/\$GAG_EXEC_SYSTEM" ]; then
-  _detected=\$(ls -1 "\$GAG_ROOT_DIR" 2>/dev/null | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)
-  if [ -n "\$_detected" ]; then export GAG_EXEC_SYSTEM="\$_detected"; fi
-fi
-EOF
-# Direct-access wrappers: every program shipped by the standalone IMAGER
-# tree (https://imager.oasu.u-bordeaux.fr) but missing from GILDAS gets a
-# self-contained /usr/local/bin wrapper selecting the IMAGER tree.
-# Rule: never shadow a GILDAS program of the same name.
-# NOTE: no heredoc here, a RUN cannot continue past a heredoc terminator.
-RUN set -eu -o pipefail; \
-    if [ -f /imager-exe/etc/bash_profile ]; then \
-      IM_EXEC="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
-      if [ -z "$IM_EXEC" ]; then IM_EXEC='x86_64-generic'; fi; \
-      echo "$IM_EXEC" > /etc/imager-exec-system; \
-      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-      for _bin in "/imager-exe/$IM_EXEC/bin/"*; do \
-        _prog="$(basename "$_bin")"; \
-        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
-          { echo '#!/bin/sh'; \
-            echo "# $_prog: runs from the standalone IMAGER tree (/imager-exe)."; \
-            echo 'export GAG_ROOT_DIR=/imager-exe'; \
-            echo "export GAG_EXEC_SYSTEM=$IM_EXEC"; \
-            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
-            echo 'fi'; \
-            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
-          } > "/usr/local/bin/$_prog"; \
-          chmod +x "/usr/local/bin/$_prog"; \
-        fi; \
-      done; \
-    fi
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# detect at build time, re-resolve at container start. The shared script
+# also writes /etc/gildas-env.sh and the IMAGER/PIIC wrappers. Bind-mount
+# it so the helper does not end up in the runtime image.
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-generic \
+    EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+    RERESOLVE=1 \
+    sh /tmp/gildas-runtime.sh env
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-generic \
+    EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+    sh /tmp/gildas-runtime.sh imager
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && echo "none (not bundled)" > /etc/piic-version
 
 LABEL org.opencontainers.image.title="GILDAS (alpine)" \
@@ -264,31 +209,13 @@ RUN set -eu -o pipefail; \
 
 SHELL ["/bin/bash", "-c"]
 
-# Direct-access wrappers: every program shipped by the PIIC tree but
-# missing from GILDAS (or IMAGER) gets a self-contained /usr/local/bin
-# wrapper selecting the PIIC tree. Same never-shadow rule as above.
-RUN set -eu -o pipefail; \
-    if [ -f "/piic-exe-$release/etc/bash_profile" ]; then \
-      PIIC_EXEC="$(ls -1 "/piic-exe-$release/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"; \
-      if [ -z "$PIIC_EXEC" ]; then PIIC_EXEC='x86_64-generic'; fi; \
-      echo "$PIIC_EXEC" > /etc/piic-exec-system; \
-      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-      for _bin in "/piic-exe-$release/$PIIC_EXEC/bin/"*; do \
-        _prog="$(basename "$_bin")"; \
-        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
-          { echo '#!/bin/sh'; \
-            echo "# $_prog: runs from the PIIC tree (/piic-exe-$release)."; \
-            echo "export GAG_ROOT_DIR=/piic-exe-$release"; \
-            echo "export GAG_EXEC_SYSTEM=$PIIC_EXEC"; \
-            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
-            echo 'fi'; \
-            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
-          } > "/usr/local/bin/$_prog"; \
-          chmod +x "/usr/local/bin/$_prog"; \
-        fi; \
-      done; \
-    fi
+# Direct-access wrappers for the PIIC tree; the shared script keeps the
+# same never-shadow rule as the Docker gildas stage and the native recipe.
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-generic \
+    EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+    sh /tmp/gildas-runtime.sh piic
 
 LABEL abeelen.gildas.target="gildas-piic" \
       abeelen.gildas.piic-version="${PIIC_VERSION}" \

@@ -36,18 +36,24 @@ on:
   push:
     branches: [master]
     paths:
-      - Dockerfile
-      - Dockerfile.alpine
-      - docker-entrypoint.sh
+      - docker/Dockerfile.debian
+      - docker/Dockerfile.alpine
+      - docker/entrypoint.sh
       - gildas_release.py
-      - "defs/*.def"
+      - "apptainer/*.def"
+      - "packages/*.txt"
+      - "patches/*.patch"
+      - "scripts/*.sh"
   pull_request:
     paths:
-      - Dockerfile
-      - Dockerfile.alpine
-      - docker-entrypoint.sh
+      - docker/Dockerfile.debian
+      - docker/Dockerfile.alpine
+      - docker/entrypoint.sh
       - gildas_release.py
-      - "defs/*.def"
+      - "apptainer/*.def"
+      - "packages/*.txt"
+      - "patches/*.patch"
+      - "scripts/*.sh"
 
 env:
   DOCKER_BUILDKIT: 1

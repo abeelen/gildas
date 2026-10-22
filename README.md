@@ -1,4 +1,3 @@
-
 This is a docker container of the [IRAM/gildas](https://www.iram.fr/IRAMFR/GILDAS/) software suite.
 
 Pre-built images are available on Docker Hub: https://hub.docker.com/r/abeelen/gildas
@@ -8,6 +7,10 @@ You can find many tags corresponding to several release version of the software.
 There are two main tag families: regular release tags and the `*-piic` tags containing the `piic` software. Every tag names its base explicitly (`-alpine` / `-debian`); the unsuffixed `latest` and `latest-piic` are aliases of the Alpine rolling tags.
 
 You can use it either with Docker or simply with Singularity.
+
+Alpine (`docker/Dockerfile.alpine`) is the default build recipe; Debian
+(`docker/Dockerfile.debian`) is opt-in. See [building](docs/building.md) for
+build args, native SIFs, and the shared package-list/runtime layout.
 
 ## Quick start
 
@@ -94,9 +97,11 @@ singularity run --bind /tmp/.X11-unix docker://abeelen/gildas:latest imager
 
 Prebuilt SIFs are published on the
 [sif-images](https://github.com/abeelen/gildas/releases/tag/sif-images)
-GitHub release. On the LAM GitLab instance the manual `sif-build` job
-also pushes them to the project container registry as `sif:<tag>` OCI
-artifacts (for users without github.com access):
+GitHub release. Scheduled pipelines on the LAM GitLab instance also
+build the SIFs and push them to the project container registry as
+`sif:<tag>` OCI artifacts (for users without github.com access).
+Default-branch pipelines expose the same job as an optional manual
+build. Pull them with:
 
 ```bash
 singularity pull gildas-latest.sif oras://registry.lam.fr/abeelen/gildas/sif:latest
@@ -108,8 +113,8 @@ exact command with `./gildas_release.py --singularity` / `--native`
 (`--natif` is an alias).
 
 Which invocations work depends on how the SIF was built, but both
-shipped kinds carry the full `%apprun` list (`defs/gildas-docker.def` and
-`defs/gildas-native-alpine.def` define the same entries):
+shipped kinds carry the full `%apprun` list (`apptainer/gildas-docker.def` and
+`apptainer/gildas-native-alpine.def` define the same entries):
 
 ```bash
 # Apprun shortcuts
@@ -154,62 +159,24 @@ and the `/etc` sentinels agree.
 
 ### Usage with Docker
 
-The `gildas_docker` alias from Quick start is the full recipe. The
-long form, for reference:
+Use the `gildas_docker` launcher from Quick start. It runs as your
+UID/GID, mounts your home and current directory, and passes X11/Wayland
+through. For a terminal-only session the minimum is just:
 
 ```bash
-xhost +SI:localuser:$(id -un)
-docker run -it \
-       --hostname "gildas" --user $(id -u):$(id -g) \
-       --ipc=host \
-       --workdir="/home/$USER" --env HOME=${HOME} --env USER=${USER}
-       --env DISPLAY=${DISPLAY} --env WAYLAND_DISPLAY=${WAYLAND_DISPLAY} \
-       --env XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR} --env XAUTHORITY=${XAUTHORITY} \
-       --volume "/etc/passwd:/etc/passwd:ro" \
-       --volume "/home/$USER:/home/$USER" \
-       --volume "/Users/$USER:/Users/$USER" \
-       --volume "/tmp/.X11-unix:/tmp/.X11-unix" \
-       abeelen/gildas:latest /bin/bash --rcfile /etc/bash.bashrc
+docker run --rm -it abeelen/gildas:latest mapping -nw
 ```
 
-where
-```bash
--volume "/home/$USER:/home/$USER"
-```
-will mount the user home for Unix Users
-```bash
--volume "/Users/$USER:/Users/$USER"
-```
-will do the same for MacOS users. MacOS users should also open remote display access :
-
-```bash
-open -a XQuartz
-# (In the XQuartz preferences, go to the “Security” tab and make sure you’ve got “Allow connections from network clients” ticked)
-ip=$(ifconfig en0 | grep inet | awk '$1=="inet" {print $2}’)
-xhost + $ip
-```
-
-You can then use any of the gildas commands directly by name — GILDAS,
-IMAGER and (on `*-piic` images) PIIC programs all work with no prefix,
-each selecting its own installation tree behind the scenes.
-
-It is easier to create usefull aliases in `~/.bashrc` (same
-`gildas_docker` as in Quick start, `latest-piic` image for PIIC):
-
-```bash
-alias clic='gildas_docker clic'
-alias mapping='gildas_docker mapping'
-alias astro='gildas_docker astro'
-alias cube='gildas_docker cube'
-[...]
-alias imager='gildas_docker imager'
-alias viewer='gildas_docker viewer'
-```
+Graphic programs need `--ipc=host`, `DISPLAY`, `XAUTHORITY`, and the X11
+socket mount; the alias already includes them. On macOS, start XQuartz
+and allow network clients before using X11. Every GILDAS, IMAGER, and
+PIIC program is available by bare name (use a `*-piic` image for PIIC).
 
 ### Container entrypoint
 
-`docker-entrypoint.sh` sources `/etc/gildas-env.sh` (default GILDAS
-environment), then `exec`s the given command:
+`docker/entrypoint.sh` (installed as
+`/usr/local/bin/docker-entrypoint.sh`) sources `/etc/gildas-env.sh`
+(default GILDAS environment), then `exec`s the given command:
 
 ```bash
 docker run --rm -it abeelen/gildas:latest mapping

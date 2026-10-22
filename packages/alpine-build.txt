@@ -1,0 +1,11 @@
+libx11-dev
+libpng-dev
+fftw-dev
+cfitsio-dev@testing
+python3-dev
+gtk+2.0-dev
+gfortran
+groff
+build-base
+linux-headers
+patch

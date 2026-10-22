@@ -7,31 +7,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG WITH_TEXLIVE=0
 
 # Slim runtime: only libraries needed to *run* GILDAS.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+RUN --mount=type=bind,source=packages/debian-runtime.txt,target=/tmp/debian-runtime.txt \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    xz-utils \
-    libx11-6 \
-    libpng16-16 \
-    libfftw3-double3 \
-    libfftw3-single3 \
-    libcfitsio10 \
-    libforms2 \
-    libasan8 \
-    libubsan1 \
-    python3 \
-    libpython3.13 \
-    python-is-python3 \
-    python3-numpy \
-    python3-scipy \
-    python3-emcee \
-    python3-matplotlib \
-    python3-astropy \
-    ipython3 \
-    python3-ipython \
-    libgtk2.0 \
+    apt-get update && apt-get install -y --no-install-recommends $(cat /tmp/debian-runtime.txt) \
     && if [ "$WITH_TEXLIVE" = "1" ]; then apt-get install -y --no-install-recommends texlive ghostscript; fi \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,29 +23,10 @@ FROM gildas_worker AS gildas_builder
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Build deps + ccache for faster recompiles. texlive only if requested.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+RUN --mount=type=bind,source=packages/debian-build.txt,target=/tmp/debian-build.txt \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    make \
-    gcc \
-    g++ \
-    gfortran \
-    ccache \
-    pkg-config \
-    dpkg-dev \
-    libx11-dev \
-    libpng-dev \
-    libfftw3-dev \
-    libcfitsio-dev \
-    libforms-dev \
-    libssl-dev \
-    python3-dev \
-    libgtk2.0-dev \
-    groff-base \
-    python3-setuptools \
-    python-dev-is-python3 \
-    patch \
+    apt-get update && apt-get install -y --no-install-recommends $(cat /tmp/debian-build.txt) \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/usr/lib/ccache:${PATH}" \
@@ -182,55 +142,23 @@ COPY --from=builder /etc/imager-version /etc/imager-version
 
 SHELL ["/bin/bash", "-c"]
 
-# Auto-detect GAG_EXEC_SYSTEM at build time instead of hardcoding
-# x86_64-${ID}${VERSION_ID}-gfortran-openmp (breaks on testing/arm64).
-RUN set -eux -o pipefail; \
-    CANDIDATE="$(ls -1 /gildas-exe-$release/ | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"; \
-    if [ -z "$CANDIDATE" ]; then CANDIDATE='x86_64-debian-gfortran-openmp'; fi; \
-    echo "$CANDIDATE" > /etc/gildas-exec-system; \
-    cat /etc/gildas-exec-system; \
-    GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-    cat > /etc/gildas-env.sh <<EOF
-# Gildas base environment
-export GAG_ROOT_DIR=/gildas-exe-$release
-export GAG_EXEC_SYSTEM=$GAG_EXEC_SYSTEM
-if [ -f \$GAG_ROOT_DIR/etc/bash_profile ]; then
-  . \$GAG_ROOT_DIR/etc/bash_profile
-fi
-# Re-resolve at container start (image may run on a different Debian point release)
-if [ ! -d "\$GAG_ROOT_DIR/\$GAG_EXEC_SYSTEM" ]; then
-  _detected=\$(ls -1 "\$GAG_ROOT_DIR" 2>/dev/null | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)
-  if [ -n "\$_detected" ]; then export GAG_EXEC_SYSTEM="\$_detected"; fi
-fi
-EOF
-# Direct-access wrappers: every program shipped by the standalone IMAGER
-# tree (https://imager.oasu.u-bordeaux.fr) but missing from GILDAS gets a
-# self-contained /usr/local/bin wrapper selecting the IMAGER tree.
-# Rule: never shadow a GILDAS program of the same name.
-# NOTE: no heredoc here, a RUN cannot continue past a heredoc terminator.
-RUN set -eux -o pipefail; \
-    if [ -f /imager-exe/etc/bash_profile ]; then \
-      IM_EXEC="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"; \
-      if [ -z "$IM_EXEC" ]; then IM_EXEC='x86_64-debian-gfortran-openmp'; fi; \
-      echo "$IM_EXEC" > /etc/imager-exec-system; \
-      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-      for _bin in "/imager-exe/$IM_EXEC/bin/"*; do \
-        _prog="$(basename "$_bin")"; \
-        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
-          { echo '#!/bin/sh'; \
-            echo "# $_prog: runs from the standalone IMAGER tree (/imager-exe)."; \
-            echo 'export GAG_ROOT_DIR=/imager-exe'; \
-            echo "export GAG_EXEC_SYSTEM=$IM_EXEC"; \
-            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
-            echo 'fi'; \
-            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
-          } > "/usr/local/bin/$_prog"; \
-          chmod +x "/usr/local/bin/$_prog"; \
-        fi; \
-      done; \
-    fi
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Runtime environment + bare-name wrappers are shared with the native SIF
+# recipe. The Debian fallback and the narrower exec-system match are the
+# only Debian-specific settings. Bind-mount the helper so it does not end
+# up in the runtime image.
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-debian-gfortran-openmp \
+    EXEC_GREP='gfortran-openmp|gfortran|generic' \
+    RERESOLVE=1 \
+    sh /tmp/gildas-runtime.sh env
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-debian-gfortran-openmp \
+    EXEC_GREP='gfortran-openmp|gfortran|generic' \
+    sh /tmp/gildas-runtime.sh imager
+
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && echo "none (not bundled)" > /etc/piic-version
 
 LABEL org.opencontainers.image.title="GILDAS" \
@@ -274,31 +202,13 @@ RUN set -eux -o pipefail; \
 
 SHELL ["/bin/bash", "-c"]
 
-# Direct-access wrappers: every program shipped by the PIIC tree but
-# missing from GILDAS (or IMAGER) gets a self-contained /usr/local/bin
-# wrapper selecting the PIIC tree. Same never-shadow rule as above.
-RUN set -eux -o pipefail; \
-    if [ -f "/piic-exe-$release/etc/bash_profile" ]; then \
-      PIIC_EXEC="$(ls -1 "/piic-exe-$release/" | grep -E 'gfortran-openmp|gfortran|generic' | head -n 1 || true)"; \
-      if [ -z "$PIIC_EXEC" ]; then PIIC_EXEC='x86_64-generic'; fi; \
-      echo "$PIIC_EXEC" > /etc/piic-exec-system; \
-      GAG_EXEC_SYSTEM="$(cat /etc/gildas-exec-system)"; \
-      for _bin in "/piic-exe-$release/$PIIC_EXEC/bin/"*; do \
-        _prog="$(basename "$_bin")"; \
-        if [ ! -x "/gildas-exe-$release/$GAG_EXEC_SYSTEM/bin/$_prog" ] && [ ! -e "/usr/local/bin/$_prog" ]; then \
-          { echo '#!/bin/sh'; \
-            echo "# $_prog: runs from the PIIC tree (/piic-exe-$release)."; \
-            echo "export GAG_ROOT_DIR=/piic-exe-$release"; \
-            echo "export GAG_EXEC_SYSTEM=$PIIC_EXEC"; \
-            echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'; \
-            echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'; \
-            echo 'fi'; \
-            echo 'exec "$GAG_EXEC_DIR/bin/'"$_prog"'" "$@"'; \
-          } > "/usr/local/bin/$_prog"; \
-          chmod +x "/usr/local/bin/$_prog"; \
-        fi; \
-      done; \
-    fi
+# Direct-access wrappers for the PIIC tree; the shared script keeps the
+# same never-shadow rule as the Docker gildas stage and the native recipe.
+RUN --mount=type=bind,source=scripts/gildas-runtime.sh,target=/tmp/gildas-runtime.sh \
+    RELEASE="$release" \
+    FALLBACK_EXEC=x86_64-generic \
+    EXEC_GREP='gfortran-openmp|gfortran|generic' \
+    sh /tmp/gildas-runtime.sh piic
 
 LABEL abeelen.gildas.target="gildas-piic" \
       abeelen.gildas.piic-version="${PIIC_VERSION}" \

@@ -38,9 +38,9 @@ def make_sets(**overrides):
 
 
 def test_tag_suffix():
-    assert _tag_suffix("Dockerfile.alpine") == "-alpine"
-    assert _tag_suffix("Dockerfile") == "-debian"
-    assert _tag_suffix("Dockerfile.custom") == "-debian"
+    assert _tag_suffix("docker/Dockerfile.alpine") == "-alpine"
+    assert _tag_suffix("docker/Dockerfile.debian") == "-debian"
+    assert _tag_suffix("docker/Dockerfile.custom") == "-debian"
 
 
 def test_image_tag():
@@ -154,7 +154,7 @@ def test_natif_disables_imager_when_upstream_unreachable():
 def test_build_without_piic_alpine_is_default():
     cmd = build_without_piic_command(["oct26a"], [], "oct26a", imager_version="oct26")
     assert "--tag abeelen/gildas:oct26a-alpine " in cmd
-    assert "-f Dockerfile.alpine ." in cmd
+    assert "-f docker/Dockerfile.alpine ." in cmd
     assert "--target gildas" in cmd
     assert "--build-arg IMAGER_VERSION=oct26" in cmd
     assert "latest" not in cmd
@@ -174,11 +174,11 @@ def test_build_without_piic_latest_alias():
 
 def test_build_without_piic_latest_and_debian():
     cmd = build_without_piic_command(
-        ["oct26a"], [], "oct26a", dockerfile="Dockerfile", tag_latest=True, imager_version="oct26"
+        ["oct26a"], [], "oct26a", dockerfile="docker/Dockerfile.debian", tag_latest=True, imager_version="oct26"
     )
     assert "--tag abeelen/gildas:oct26a-debian" in cmd
     assert "--tag abeelen/gildas:latest-debian" in cmd
-    assert "-f Dockerfile ." in cmd
+    assert "-f docker/Dockerfile.debian ." in cmd
 
 
 def test_build_with_piic_needs_both_tarballs():
@@ -256,7 +256,7 @@ def test_natif_command_bundles_piic_when_available():
     assert cmd is not None and cmd.has_piic
     assert "PIIC_URL=https://www.iram.fr/~gildas/dist/archive/piic" not in cmd.command
     assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd.command
-    assert "defs/gildas-native-alpine.def" in cmd.command
+    assert "apptainer/gildas-native-alpine.def" in cmd.command
     assert "gildas-jul26a-piic-native-alpine.sif" in cmd.command
     cmd = natif_command("oct26a", sets, imager_version="oct26")
     assert cmd is not None and not cmd.has_piic
@@ -266,9 +266,9 @@ def test_natif_command_bundles_piic_when_available():
 
 def test_natif_always_uses_alpine_recipe():
     sets = make_sets()
-    cmd = natif_command("oct26a", sets, dockerfile="Dockerfile", imager_version="oct26")
+    cmd = natif_command("oct26a", sets, dockerfile="docker/Dockerfile.debian", imager_version="oct26")
     assert cmd is not None and cmd.alpine is True
-    assert "defs/gildas-native-alpine.def" in cmd.command
+    assert "apptainer/gildas-native-alpine.def" in cmd.command
     assert "gildas-oct26a-native-alpine.sif" in cmd.command
     assert "-natif" not in cmd.command
 
@@ -284,8 +284,8 @@ def test_natif_commands_follow_loaded_sets():
 
 def test_singularity_command(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "defs").mkdir()
-    (tmp_path / "defs" / "gildas-docker.def").write_text(
+    (tmp_path / "apptainer").mkdir()
+    (tmp_path / "apptainer" / "gildas-docker.def").write_text(
         "Bootstrap: docker\nFrom: abeelen/gildas:latest\n"
     )
     cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)

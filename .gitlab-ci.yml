@@ -4,16 +4,17 @@
 # the script prints. Pushes need DOCKERHUB_USERNAME / DOCKERHUB_TOKEN.
 # Runners tagged `docker` provide the Docker daemon (host socket, no dind
 # service needed). Schedules are created in the GitLab UI (Build >
-# Pipeline schedules, e.g. weekly); manual runs via "Run pipeline" with
-# optional variables (RELEASE, DEBIAN=1, PIIC=1, ARCHIVE=1, SIF_TAGS,
-# SIF_TMPDIR, SIF_MIN_FREE_GB).
+# Pipeline schedules, e.g. weekly); web-triggered runs via "Run pipeline"
+# with optional variables (RELEASE, DEBIAN=1, PIIC=1, ARCHIVE=1).
 # Cache tags are pulled from the GitLab Container Registry first (when
 # present) and only fall back to Docker Hub, which avoids Hub rate limits
 # on repeat builds. The same tags are mirrored back after each build.
 # SIFs are built natively on the dedicated `apptainer` runner from the
 # GitLab registry (no Docker installed there) and pushed back to the
-# project registry as `sif:<tag>` OCI artifacts. GitHub Actions keeps
-# publishing its SIFs as `sif-images` release assets instead.
+# project registry as `sif:<tag>` OCI artifacts. Scheduled pipelines run
+# the SIF job automatically; default-branch push/web pipelines offer it as
+# an optional manual job that does not block. GitHub Actions keeps
+# publishing its SIFs as `sif-images` release assets.
 
 stages: [plan, build, publish]
 
@@ -117,19 +118,25 @@ sif-build:
   # image from the GitLab Container Registry instead. Each SIF is then
   # pushed to `<registry>/<project>/sif:<tag>` with `singularity push`
   # (plain `oras push` stamps an artifact type this registry rejects).
-  # The per-tag def file rewrites `From:` on defs/gildas-docker.def.
-  # Manual only.
+  # The per-tag def file rewrites `From:` on apptainer/gildas-docker.def.
+  # Scheduled pipelines run it automatically; default-branch push/web
+  # pipelines expose it as an optional manual job. allow_failure on the
+  # manual rules keeps those pipelines from being marked blocked.
   stage: publish
   tags: [apptainer]
   timeout: 6h
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
-    # Manual: also listed on master pipelines (not only web-triggered ones).
-    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
+    - if: $CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
-    - if: $CI_PIPELINE_SOURCE == "web"
+      allow_failure: true
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
+      allow_failure: true
+    - when: never
   script:
     - |
       set -euo pipefail
@@ -200,12 +207,12 @@ sif-build:
       # registry, not archived, so their ~253/~640 MiB size no longer
       # determines the pipeline artifact size.
       for tag in ${SIF_TAGS:-latest latest-piic}; do
-        # Build the per-tag def from defs/gildas-docker.def. Write to a temp
+        # Build the per-tag def from apptainer/gildas-docker.def. Write to a temp
         # file: when tag == latest, the source is not the destination, but
         # keeping the rewrite in the build temp avoids clobbering it.
         tmp_def="$(mktemp -p "$build_tmp" gildas-def.XXXXXX)"
         : "${CI_REGISTRY_IMAGE:?CI_REGISTRY_IMAGE is not set}"
-        sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" defs/gildas-docker.def > "${tmp_def}"
+        sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" apptainer/gildas-docker.def > "${tmp_def}"
         echo "Building gildas-${tag} from ${CI_REGISTRY_IMAGE}:${tag} ..."
         # --disable-cache keeps the compressed OCI layers out of the build
         # volume: the uncompressed rootfs alone is already the peak user.

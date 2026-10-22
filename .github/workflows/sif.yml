@@ -81,7 +81,7 @@ jobs:
             # SIF carries runscript + %apprun entries. Built as root via
             # sudo: the hosted runners forbid unprivileged mount
             # namespaces, so --fakeroot cannot work there.
-            sed "s|^From: .*|From: abeelen/gildas:$tag|" defs/gildas-docker.def > /tmp/sif-build.def
+            sed "s|^From: .*|From: abeelen/gildas:$tag|" apptainer/gildas-docker.def > /tmp/sif-build.def
             sudo -E singularity build "$sif" /tmp/sif-build.def
             gh release upload sif-images "$sif" --clobber
             sudo rm -f "$sif"
@@ -106,12 +106,12 @@ jobs:
           import os
           from gildas_release import get_natif_commands, _release_sort_key, _load_release_sets
           sets = _load_release_sets()
-          cmds = get_natif_commands(sets=sets, dockerfile='Dockerfile.alpine')
+          cmds = get_natif_commands(sets=sets, dockerfile='docker/Dockerfile.alpine')
           rel = os.environ.get('NATIV_RELEASE', '').strip()
           pick = next((c for c in cmds if c.release == rel), None) if rel else None
           if rel and pick is None:
               sets = _load_release_sets(include_archive=True)
-              cmds = get_natif_commands(sets=sets, dockerfile='Dockerfile.alpine')
+              cmds = get_natif_commands(sets=sets, dockerfile='docker/Dockerfile.alpine')
               pick = next((c for c in cmds if c.release == rel), None)
           if rel and pick is None:
               raise SystemExit(f\"release '{rel}' not buildable natively\")

@@ -2,179 +2,123 @@
 
 ## `gildas_release.py`
 
-Inspects the IRAM GILDAS/PIIC download directories and the Docker Hub
-tags for `abeelen/gildas`, then prints ready-to-run `docker build` /
-`docker push` commands — for both the `gildas` and `gildas-piic` targets
-when the corresponding tarballs exist upstream, with the correct
-`GILDAS_URL` / `PIIC_URL` archive URLs when necessary. The release is
-inlined and quoted, empty `--build-arg`s are dropped, and `latest*`
-tags go to the newest release per family (`latest-alpine` for GILDAS,
-`latest-piic-alpine` for GILDAS+PIIC, tracked independently, plus the
-unsuffixed `latest` / `latest-piic` aliases; single `--release` always
-tags `latest`). Archived releases are excluded
-unless `--archive` is given (PIIC commands often need it, as PIIC
-releases lag behind GILDAS ones — see `--piic`).
+Inspects the upstream GILDAS/PIIC trees and Docker Hub tags for
+`abeelen/gildas`, then prints ready-to-run `docker build` / `docker
+push` commands for the `gildas` and `gildas-piic` targets. It fills
+`GILDAS_URL` / `PIIC_URL` for archived releases, drops empty build
+args, and keeps `latest*` per family (`latest-alpine` for GILDAS,
+`latest-piic-alpine` for GILDAS+PIIC, plus the unsuffixed aliases).
+`--debian` selects `docker/Dockerfile.debian`; the default is
+`docker/Dockerfile.alpine`.
 
 ```bash
-# List build commands for all missing releases (GILDAS and PIIC),
-# ordered from oldest to newest (newest per family gets `latest` tags)
+# Missing releases (oldest first; newest gets the latest tags)
 ./gildas_release.py
+./gildas_release.py --force          # include tags already on Docker Hub
+./gildas_release.py --archive        # include archived releases
 
-# Same, but including releases that are already present on Docker Hub
-./gildas_release.py --force
-
-# Also include archived releases (off by default: slower, queries the
-# archive trees; often needed for PIIC, whose releases lag behind GILDAS)
-./gildas_release.py --archive
-
-# Only PIIC build commands. PIIC releases lag behind GILDAS ones, so
-# --piic pairs main-tree PIIC with GILDAS from main or archive;
-# add --archive to also search PIIC itself in the archives.
+# PIIC: pair main-tree PIIC with GILDAS from main or archive
 ./gildas_release.py --piic
 ./gildas_release.py --piic --archive
 ./gildas_release.py --release jul26a --piic
 
-# Commands for a single release (and its -piic variant if available),
-# always tagging `latest`.
+# Single release (and its -piic variant when available)
 ./gildas_release.py --release jan26a
 
-# Singularity: emit `singularity build ... defs/gildas-docker.def`
-# commands (From: rewritten per tag, lists all known releases)
+# SIF commands: Docker-converted (From: rewritten) or native Alpine
 ./gildas_release.py --singularity
 ./gildas_release.py --singularity --debian
-./gildas_release.py --release jan26a --singularity
-
-# Singularity, native path: emit `singularity build ...
-# defs/gildas-native-alpine.def` commands (one per release, PIIC bundled
-# when available, archive URLs included when needed — needs root or
-# --fakeroot to run; native builds are Alpine-only)
-./gildas_release.py --native
-./gildas_release.py --native --archive
+./gildas_release.py --native          # --natif is an alias
 ./gildas_release.py --release jan26a --native
-# `--natif` is kept as an alias for `--native`.
-./gildas_release.py --natif
 
-# Debian variants and direct execution
+# Debian variants, execution, logging
 ./gildas_release.py --debian
 ./gildas_release.py --release jan26a --execute
 ./gildas_release.py --release jan26a --execute --log-dir logs
-./gildas_release.py -v   # info logs, -vv for debug
+./gildas_release.py -v               # -vv for debug
 ```
 
-GILDAS/IMAGER coupling is automatic (`oct26a` →
-`--build-arg IMAGER_VERSION=oct26`, `--imager-version` overrides; when
-no matching IMAGER exists yet, the floating `last` is resolved to
-whatever it currently points to, with a warning). The IMAGER listing is
-**fail-open**: if `share.oasu.u-bordeaux.fr` is unreachable (offline CI,
-firewall), the script logs a warning and emits
-`--build-arg IMAGER_VERSION=none --build-arg WITH_IMAGER=0`, so the image
-is built without IMAGER instead of failing on the download. Such images
-carry the `abeelen.gildas.imager-version="none"` /
-`abeelen.gildas.imager-bundled="0"` labels and `/etc/imager-version`
-reads `none (not bundled)`, which is how a later run detects them. Once
-the upstream answers again, the drift check rebuilds those tags with
-IMAGER. Fail-open is never silent: the script emits a CI warning —
-a `::warning title=IMAGER not bundled::` annotation on GitHub Actions
-and a yellow `WARNING: IMAGER not bundled: …` line in the GitLab job
-log (GitLab has no annotation API). Pass `--imager-version none` to
-skip IMAGER explicitly, or a concrete version like `oct26` to pin it
-without querying upstream.
+IMAGER versions are coupled to GILDAS releases (`oct26a` selects
+`IMAGER_VERSION=oct26`). The IMAGER listing is fail-open: if upstream
+is unreachable, the script warns, emits `IMAGER_VERSION=none` with
+`WITH_IMAGER=0`, and the image records
+`abeelen.gildas.imager-version="none"` / `imager-bundled="0"` plus
+`none (not bundled)` in `/etc/imager-version`. A later run rebuilds the
+tag when IMAGER becomes available. `--imager-version none` skips IMAGER
+explicitly; a concrete version pins it without querying upstream.
 
-Missing-tag detection also covers IMAGER and PIIC drift, for main-tree
-releases: the script compares the expected IMAGER version against the
-`abeelen.gildas.imager-version` image label and re-emits the build when
-they differ — so a release built while its IMAGER was not out yet is
-rebuilt once the matching IMAGER appears. Likewise, `-piic` images carry
-`abeelen.gildas.piic-version` / `abeelen.gildas.piic-bundled`: if a tag
-was built without PIIC (`none` / `0`), it is rebuilt once the release
-appears in the upstream PIIC tree. Unreadable labels never trigger
-rebuilds, pre-label GILDAS images rebuild once (pre-label `-piic` images
-are assumed to have PIIC, to avoid churning every existing tag), and
-archived releases are immutable snapshots matched by tag existence only.
+PIIC listing is fail-open too: an unreachable tree yields GILDAS-only
+commands instead of an abort, and the next readable run builds the
+`-piic` tags. Missing-tag detection also covers IMAGER/PIIC drift by
+comparing the expected version with the image labels. Archived releases
+are immutable snapshots, matched by tag existence only. Both fail-open
+paths emit CI warnings (a GitHub annotation or a GitLab `WARNING:`
+log line), never silently.
 
-PIIC listing is fail-open too: when `www.iram.fr` cannot be reached for
-the PIIC tree, the script logs a warning and emits GILDAS-only commands
-instead of aborting; the same GitHub/GitLab CI warning mechanism as
-IMAGER marks the run. `-piic` tags are then built on the next run that
-can read the listing. The PIIC download inside the Dockerfile was
-already fail-open and now writes `none (not bundled)` to
-`/etc/piic-version`.
-
-With `--execute --log-dir logs`, each build tees full output to
-`logs/<tag>.log` and prints only the tail. `tests/` covers the tag,
-pairing, filtering and drift logic offline (`python -m pytest tests/`).
+With `--execute --log-dir logs`, each build tees output to
+`logs/<tag>.log` and prints only the tail. Offline tests:
+`python -m pytest tests/`.
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` runs the same script in CI (Alpine and
-Debian families in parallel):
+`.github/workflows/build.yml` runs the script for Alpine and Debian in
+parallel:
 
-- weekly schedule: builds and pushes whatever is missing on Docker Hub;
-- recipe push (`Dockerfile*`, `docker-entrypoint.sh`, `gildas_release.py`,
-  `defs/*.def`): rebuilds on top of the new recipes;
-- manual dispatch (`Run workflow`, optional `release` / `debian` /
-  `piic` / `archive` inputs);
-- pull requests: print-only plan, no build, no push.
+- weekly schedule: build and push whatever is missing on Docker Hub;
+- recipe push (`docker/Dockerfile.alpine`, `docker/Dockerfile.debian`,
+  `docker/entrypoint.sh`, `gildas_release.py`, `apptainer/*.def`,
+  `packages/*.txt`, `patches/*.patch`, `scripts/*.sh`): rebuild on top
+  of the new recipes;
+- manual dispatch (optional `release` / `debian` / `piic` / `archive`);
+- pull requests: print-only plan, no build or push.
 
-Pushing needs two repo secrets: `DOCKERHUB_USERNAME` and
-`DOCKERHUB_TOKEN` (a Hub access token with Read & Write permissions).
-Builds reuse previously pushed layers (previous tags are pre-pulled),
-so unchanged images rebuild in minutes while a new release compiles
-from scratch (up to ~1 h per image, jobs run in parallel). Runners are
-pinned to `ubuntu-24.04` so the environment never shifts under us.
+Secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Read & Write).
+Previous tags are pre-pulled for layer reuse; runners are pinned to
+`ubuntu-24.04`.
 
-`.github/workflows/sif.yml` converts Hub tags to Singularity SIFs
-(`latest`, `latest-piic` by default, override via manual dispatch) and
-attaches them to the rolling `sif-images` GitHub release, rebuilding a
-tag only when its Hub push is newer than the published asset. Run it
-manually after pushing rebuilt tags; the Friday schedule then just
-keeps them fresh. Download with:
+`.github/workflows/sif.yml` converts Hub tags to SIFs (`latest` and
+`latest-piic` by default) and attaches them to the rolling
+`sif-images` GitHub release, rebuilding only when the Hub push is newer
+than the published asset. Run it manually after rebuilt tags; the
+Friday schedule keeps it fresh. Download with:
 
 ```bash
 gh release download sif-images -R abeelen/gildas -p 'gildas-*.sif'
 ```
 
-The same workflow builds one native SIF from the tarballs on demand
-(manual dispatch with the `natif` input: newest release by default,
-always the Alpine recipe, `release` pins one explicitly, archived
-releases included automatically) and on schedule whenever its asset is
-still missing. Native assets accumulate per release name on the same
-rolling release; the `.def` files remain the manual path for anything
-custom.
+The same workflow can build one native Alpine SIF on demand (the
+`natif` input; `release` pins one, archived releases included) or on
+schedule when its asset is missing. Native assets accumulate per
+release on the same rolling release; the `.def` files remain the manual
+path for custom builds.
 
 ## GitLab
 
-`.gitlab-ci.yml` mirrors the same design, running on runners tagged
-`docker` (host socket, no dind service needed): weekly schedules are
-created in the GitLab UI (Build > Pipeline schedules), manual runs via
-"Run pipeline" with optional `RELEASE` / `DEBIAN=1` / `PIIC=1` /
-`ARCHIVE=1` variables, and merge requests get a print-only plan. It
-needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` CI/CD variables. The
-Alpine build leg additionally mirrors `abeelen/gildas:latest` to the
-project container registry (on LAM:
-`registry.lam.fr/abeelen/gildas:latest`, short-lived registry
-credentials, nothing to configure).
+`.gitlab-ci.yml` mirrors the GitHub design on `docker`-tagged runners
+(host socket, no dind service). Schedules are created in the GitLab UI;
+web-triggered runs accept `RELEASE` / `DEBIAN=1` / `PIIC=1` /
+`ARCHIVE=1`; merge requests get a print-only plan. Set
+`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`. The Alpine leg also mirrors
+`abeelen/gildas:latest` to the project registry (on LAM:
+`registry.lam.fr/abeelen/gildas:latest`).
 
-SIFs are built by the manual `sif-build` job on the `apptainer` runner,
-from the GitLab registry, and pushed back to the project container
-registry as `sif:<tag>` OCI artifacts with `singularity push` (plain
-`oras push` is rejected by this registry). On LAM:
+The `sif-build` job on the `apptainer` runner builds from the GitLab
+registry and pushes `sif:<tag>` OCI artifacts with `singularity push`
+(`oras push` is rejected by this registry). It runs automatically on
+scheduled default-branch pipelines. Default-branch push and web
+pipelines expose it as an optional manual job (`allow_failure`), so they
+do not wait on it; other pipelines skip it. On LAM:
 
 ```bash
 singularity pull gildas-latest.sif oras://registry.lam.fr/abeelen/gildas/sif:latest
 singularity pull gildas-latest-piic.sif oras://registry.lam.fr/abeelen/gildas/sif:latest-piic
 ```
 
-The SIFs are no longer kept as job artifacts, so a pipeline does not
-archive hundreds of MiB. The job starts by removing `sifs/`, pushes each
-tag, then deletes the local SIF; a reused workspace therefore cannot
-accumulate old images. Set `SIF_TAGS` to build only a subset (default:
-`latest latest-piic`).
-
-Apptainer unpacks OCI layers into its temporary directory, and the PIIC
-image is too large for the runner's `/tmp`; the job therefore points
-`APPTAINER_TMPDIR` / `SINGULARITY_TMPDIR` and the caches at job-specific
-directories under `$CI_PROJECT_DIR`, cleaned up on exit. Set
-`SIF_TMPDIR` / `SIF_CACHEDIR` to a larger scratch filesystem if the
-build volume is not big enough, and `SIF_MIN_FREE_GB` for a preflight
-space check.
+SIFs are no longer kept as job artifacts. The job clears `sifs/`,
+pushes each tag, then deletes the local SIF; the `SIF_TAGS` schedule or
+web-pipeline variable builds a subset (default `latest latest-piic`). Because the
+PIIC image does not fit in the runner's `/tmp`,
+`APPTAINER_TMPDIR` / `SINGULARITY_TMPDIR` and the caches point under
+`$CI_PROJECT_DIR` and are cleaned on exit. Override
+`SIF_TMPDIR` / `SIF_CACHEDIR` for larger scratch, and `SIF_MIN_FREE_GB`
+for the preflight space check.

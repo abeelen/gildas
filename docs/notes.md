@@ -29,8 +29,11 @@ which first suggested the runtime — but re-reading that result, it
 only proves the runtime places *well-behaved* payloads fine; GILDAS
 moves *itself*. Source inspection settled it.
 
-Fix shipped as `patches/sic-foreground.patch` (applied in all four
-recipes): after `setpgrp()`, restore our own group to the foreground
+Fix shipped as `patches/sic-foreground.patch` (applied by
+`docker/Dockerfile.alpine`, `docker/Dockerfile.debian`, and
+`apptainer/gildas-native-alpine.def`; `apptainer/gildas-docker.def`
+inherits the patched image): after `setpgrp()`, restore our own group to
+the foreground
 with `tcsetpgrp()` when stdin is a tty. Safety properties, all
 verified by reading the code (no behavior change except the freeze):
 
@@ -54,10 +57,11 @@ Workarounds for pre-fix images: interact through an inner shell
   does not trigger (container creation itself needs userns).
 - `docker`-tagged runners: same kernel gate (verified by failure).
 - Consequence: shared/docker runners build Docker images only. SIFs are
-  built by the manual `sif-build` job on the dedicated `apptainer`
-  runner instead, with `APPTAINER_TMPDIR` on the build volume because
-  the PIIC rootfs does not fit in the runner's `/tmp`, then pushed to
-  the project container registry as `sif:<tag>` OCI artifacts.
+  built by the scheduled `sif-build` job on the dedicated `apptainer`
+  runner instead (optional and non-blocking on default-branch push/web
+  pipelines), with `APPTAINER_TMPDIR` on the build volume because the
+  PIIC rootfs does not fit in the runner's `/tmp`, then pushed to the
+  project container registry as `sif:<tag>` OCI artifacts.
 
 ## Registry lessons (Oct 2026)
 

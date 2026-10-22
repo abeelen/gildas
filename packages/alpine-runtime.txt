@@ -1,0 +1,16 @@
+bash
+curl
+libx11
+libpng
+fftw
+gtk+2.0
+python3
+ipython
+py3-pip
+py3-numpy
+py3-scipy
+py3-emcee
+py3-matplotlib
+cfitsio@testing
+libgomp
+gcompat

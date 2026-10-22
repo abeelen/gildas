@@ -22,50 +22,25 @@ From: alpine:latest
 # %setup runs on the host (repo root), so plain relative paths work;
 # %files is avoided: its staging proved unreliable (missing file at %post).
 %setup
-    mkdir -p ${SINGULARITY_ROOTFS}/opt/patches
+    mkdir -p ${SINGULARITY_ROOTFS}/opt/patches ${SINGULARITY_ROOTFS}/opt/scripts ${SINGULARITY_ROOTFS}/opt/packages
     cp patches/*.patch ${SINGULARITY_ROOTFS}/opt/patches/
+    cp scripts/gildas-runtime.sh ${SINGULARITY_ROOTFS}/opt/scripts/
+    cp packages/alpine-*.txt ${SINGULARITY_ROOTFS}/opt/packages/
 
 %post
     set -eu
 
-    # Only cfitsio comes from edge/testing (same as Dockerfile.alpine).
+    # Only cfitsio comes from edge/testing (same as docker/Dockerfile.alpine).
     echo "@testing http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories
 
-    # Slim runtime dependencies (mirrors the gildas_worker stage).
-    apk add --no-cache \
-        bash \
-        curl \
-        libx11 \
-        libpng \
-        fftw \
-        gtk+2.0 \
-        python3 \
-        ipython \
-        py3-pip \
-        py3-numpy \
-        py3-scipy \
-        py3-emcee \
-        py3-matplotlib \
-        cfitsio@testing \
-        libgomp \
-        gcompat
+    # Slim runtime dependencies (shared with docker/Dockerfile.alpine).
+    apk add --no-cache $(cat /opt/packages/alpine-runtime.txt)
 
     # No py3-astropy in Alpine repos: install via pip.
     pip install --break-system-packages astropy
 
-    # Build dependencies
-    apk add --no-cache \
-        libx11-dev \
-        libpng-dev \
-        fftw-dev \
-        cfitsio-dev@testing \
-        python3-dev \
-        gtk+2.0-dev \
-        gfortran \
-        groff \
-        build-base \
-        linux-headers \
-        patch
+    # Build dependencies (shared with docker/Dockerfile.alpine; ccache is Docker-only).
+    apk add --no-cache $(cat /opt/packages/alpine-build.txt)
 
     # Build and install GILDAS
     # Defaults for build-time variables: the host environment does NOT
@@ -169,71 +144,23 @@ From: alpine:latest
         echo "none (not bundled)" > /etc/piic-version
     fi
 
-    # Auto-detect GAG_EXEC_SYSTEM (musl layout differs from glibc).
-    gag_exec_system="$(ls -1 "/gildas-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
-    if [ -z "${gag_exec_system}" ]; then gag_exec_system='x86_64-generic'; fi
-
-    # Single environment file, shared by the runscript and appruns
-    # (same layout as /etc/gildas-env.sh in the Docker images).
-    {
-        echo "# Gildas base environment"
-        echo "export GAG_ROOT_DIR=/gildas-exe-${release}"
-        echo "export GAG_EXEC_SYSTEM=${gag_exec_system}"
-        echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
-        echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
-        echo 'fi'
-    } > /etc/gildas-env.sh
-
-    # Direct-access wrappers (same rule as the Docker images): every
-    # program shipped by the PIIC tree but missing from GILDAS (or IMAGER)
-    # gets a self-contained /usr/local/bin wrapper selecting the PIIC tree.
-    # Never shadows a GILDAS program of the same name.
-    if [ -f "/piic-exe-${release}/etc/bash_profile" ]; then
-        piic_exec="$(ls -1 "/piic-exe-${release}/" | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
-        if [ -z "${piic_exec}" ]; then piic_exec='x86_64-generic'; fi
-        for _bin in "/piic-exe-${release}/${piic_exec}/bin/"*; do
-            _prog="$(basename "${_bin}")"
-            if [ ! -x "/gildas-exe-${release}/${gag_exec_system}/bin/${_prog}" ] && [ ! -e "/usr/local/bin/${_prog}" ]; then
-                {
-                    echo '#!/bin/sh'
-                    echo "# ${_prog}: runs from the PIIC tree (/piic-exe-${release})."
-                    echo "export GAG_ROOT_DIR=/piic-exe-${release}"
-                    echo "export GAG_EXEC_SYSTEM=${piic_exec}"
-                    echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
-                    echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
-                    echo 'fi'
-                    echo 'exec "$GAG_EXEC_DIR/bin/'"${_prog}"'" "$@"'
-                } > "/usr/local/bin/${_prog}"
-                chmod +x "/usr/local/bin/${_prog}"
-            fi
-        done
-    fi
-
-    # Same for the standalone IMAGER tree at canonical /imager-exe.
-    if [ -f /imager-exe/etc/bash_profile ]; then
-        im_exec="$(ls -1 /imager-exe/ | grep -E 'gfortran-openmp|gfortran|generic|musl|alpine' | head -n 1 || true)"
-        if [ -z "${im_exec}" ]; then im_exec='x86_64-generic'; fi
-        echo "${im_exec}" > /etc/imager-exec-system
-        for _bin in "/imager-exe/${im_exec}/bin/"*; do
-            _prog="$(basename "${_bin}")"
-            if [ ! -x "/gildas-exe-${release}/${gag_exec_system}/bin/${_prog}" ] && [ ! -e "/usr/local/bin/${_prog}" ]; then
-                {
-                    echo '#!/bin/sh'
-                    echo "# ${_prog}: runs from the standalone IMAGER tree (/imager-exe)."
-                    echo 'export GAG_ROOT_DIR=/imager-exe'
-                    echo "export GAG_EXEC_SYSTEM=${im_exec}"
-                    echo 'if [ -f "$GAG_ROOT_DIR/etc/bash_profile" ]; then'
-                    echo '  . "$GAG_ROOT_DIR/etc/bash_profile"'
-                    echo 'fi'
-                    echo 'exec "$GAG_EXEC_DIR/bin/'"${_prog}"'" "$@"'
-                } > "/usr/local/bin/${_prog}"
-                chmod +x "/usr/local/bin/${_prog}"
-            fi
-        done
-    fi
-
-    # Keep interactive shells working too
-    cat /etc/gildas-env.sh >> /etc/bash.bashrc
+    # Runtime environment + bare-name wrappers (shared with the Docker
+    # images). Keep the native order : PIIC wrappers first, then IMAGER,
+    # so an existing wrapper always wins as it did before.
+    RELEASE="${release}" \
+        FALLBACK_EXEC=x86_64-generic \
+        EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+        RERESOLVE=0 \
+        APPEND_BASHRC=1 \
+        sh /opt/scripts/gildas-runtime.sh env
+    RELEASE="${release}" \
+        FALLBACK_EXEC=x86_64-generic \
+        EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+        sh /opt/scripts/gildas-runtime.sh piic
+    RELEASE="${release}" \
+        FALLBACK_EXEC=x86_64-generic \
+        EXEC_GREP='gfortran-openmp|gfortran|generic|musl|alpine' \
+        sh /opt/scripts/gildas-runtime.sh imager
 
     # Mirror the Docker images' self-describing labels so native SIFs can be
     # inspected the same way. Apptainer exports APPTAINER_LABELS;

@@ -10,17 +10,19 @@ docker build \
        --target gildas \
        --build-arg release=${release} \
        --build-arg MAKE_JOBS=$(nproc) \
-       -f Dockerfile.alpine .
+       -f docker/Dockerfile.alpine .
 # Only add --tag abeelen/gildas:latest-alpine (and the latest alias)
 # for the newest release.
 ```
 
-Alpine (`Dockerfile.alpine`) is the default build; every tag carries its
-base (`-alpine` / `-debian`, e.g. `${release}-alpine`), with unsuffixed
-`latest` / `latest-piic` kept as aliases of the Alpine rolling tags.
-Use `-f Dockerfile` for the opt-in Debian-based images.
-`Dockerfile`s for this project are available at
-https://github.com/abeelen/gildas.git
+Alpine (`docker/Dockerfile.alpine`) is the default build; every tag
+carries its base (`-alpine` / `-debian`, e.g. `${release}-alpine`), with
+unsuffixed `latest` / `latest-piic` kept as aliases of the Alpine rolling
+tags. Use `-f docker/Dockerfile.debian` for the opt-in Debian images.
+Docker recipes live in `docker/`; SIF recipes live in `apptainer/`.
+Both Dockerfiles read `packages/<distro>-{runtime,build}.txt` and share
+`scripts/gildas-runtime.sh` for the runtime environment and bare-name
+wrappers.
 
 In practice, prefer `gildas_release.py` (see
 [automation](automation.md)): it picks the right URLs, tags `latest`
@@ -52,7 +54,7 @@ correctly and only builds what is missing.
 ## PIIC
 
 Starting with oct19a, PIIC is included in the container. The multi-stage
-`Dockerfile`s provide two main targets:
+Dockerfiles provide two main targets:
 
 - `gildas` : image without PIIC
 - `gildas-piic` : image including PIIC
@@ -81,7 +83,7 @@ docker build \
        --tag abeelen/gildas:${release}-piic-alpine \
        --target gildas-piic \
        --build-arg release=${release} \
-       -f Dockerfile.alpine .
+       -f docker/Dockerfile.alpine .
 # Only add --tag abeelen/gildas:latest-piic-alpine (and the latest-piic
 # alias) for the newest release.
 ```
@@ -105,14 +107,14 @@ docker build \
        --tag abeelen/gildas:${release}-debian \
        --target gildas \
        --build-arg release=${release} \
-       -f Dockerfile .
+       -f docker/Dockerfile.debian .
 
 # GILDAS + PIIC, Debian base image
 docker build \
        --tag abeelen/gildas:${release}-piic-debian \
        --target gildas-piic \
        --build-arg release=${release} \
-       -f Dockerfile .
+       -f docker/Dockerfile.debian .
 ```
 
 ## Check available tags on Docker Hub
@@ -125,8 +127,8 @@ curl -L -s 'https://registry.hub.docker.com/v1/repositories/abeelen/gildas/tags'
 
 | Method | Command | Pros | Cons |
 |--------|---------|------|------|
-| From Docker Hub (`defs/gildas-docker.def`) | `sed "s\|^From: .*\|From: abeelen/gildas:jan26a-alpine\|" defs/gildas-docker.def > /tmp/sif-build.def && singularity build gildas-jan26a-alpine.sif /tmp/sif-build.def` (`./gildas_release.py --singularity`) | fast, no compiler needed, runscript + `%apprun` kept | needs the Docker tag to exist |
-| Native Alpine (`defs/gildas-native-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-native-alpine.sif defs/gildas-native-alpine.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
+| From Docker Hub (`apptainer/gildas-docker.def`) | `sed "s\|^From: .*\|From: abeelen/gildas:jan26a-alpine\|" apptainer/gildas-docker.def > /tmp/sif-build.def && singularity build gildas-jan26a-alpine.sif /tmp/sif-build.def` (`./gildas_release.py --singularity`) | fast, no compiler needed, runscript + `%apprun` kept | needs the Docker tag to exist |
+| Native Alpine (`apptainer/gildas-native-alpine.def`) | `SINGULARITYENV_GILDAS_RELEASE=jan26a singularity build gildas-jan26a-native-alpine.sif apptainer/gildas-native-alpine.def` | no Docker involved, any (incl. archived) release with `SINGULARITYENV_GILDAS_URL`/`SINGULARITYENV_PIIC_URL` overrides, `MAKE_JOBS`/`WITH_TEXLIVE` tunable, slim musl image with local musl patches | full recompile (~slow), needs root or `--fakeroot` |
 
 There is only one native recipe (Alpine). The Docker-converted path
 keeps the Docker tag in the filename (`gildas-<tag>.sif`); native SIFs
@@ -135,7 +137,7 @@ the PIIC tarball was available and bundled.
 
 ```bash
 # Native build from tarballs (no Docker involved), with configurable
-# release and URLs (see %environment in defs/gildas-native-alpine.def).
+# release and URLs (see %environment in apptainer/gildas-native-alpine.def).
 # NOTE: SINGULARITYENV_ prefix is mandatory, plain VAR=... never reaches
 # %post (silently dropped). Easiest: use `./gildas_release.py --native`
 # (`--natif` is an alias), which generates the right command (IMAGER
@@ -145,14 +147,15 @@ export SINGULARITYENV_GILDAS_URL=https://www.iram.fr/~gildas/dist
 export SINGULARITYENV_PIIC_URL=https://www.iram.fr/~gildas/dist
 export SINGULARITYENV_MAKE_JOBS=$(nproc)
 # export SINGULARITYENV_WITH_TEXLIVE=1  # only if you need the pipeline (texlive in image)
-sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-native-alpine.sif defs/gildas-native-alpine.def
+sudo -E singularity build gildas-${SINGULARITYENV_GILDAS_RELEASE}-native-alpine.sif apptainer/gildas-native-alpine.def
 # If PIIC was bundled, use the convention ...-piic-native-alpine.sif.
 ```
 
-The `.def` recipes mirror the Dockerfiles: `defs/gildas-docker.def`
-bootstraps from Docker Hub (runscript + `%apprun` shortcuts),
-`defs/gildas-native-alpine.def` compiles from tarballs (PIIC bundled when
-its tarball exists upstream).
+The `.def` recipes mirror the Dockerfiles:
+`apptainer/gildas-docker.def` bootstraps from Docker Hub (runscript +
+`%apprun` shortcuts), `apptainer/gildas-native-alpine.def` compiles from
+tarballs (PIIC bundled when its tarball exists upstream). The Alpine
+package lists and the runtime helper are shared with the native recipe.
 
 Never glob `/tmp` or `/var/tmp` in `%post` cleanup: under
 `singularity build` those hold the builder's own busy mounts and `rm`
