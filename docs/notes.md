@@ -45,7 +45,7 @@ Workarounds for pre-fix images: interact through an inner shell
 (`singularity exec … bash`), batch stdin from files/pipes, or
 `docker run -it`.
 
-## No SIF builds on GitLab runners (Oct 2026)
+## SIF builds on GitLab runners (Oct 2026)
 
 - Shared runners: `docker:dind` never starts (no privileged mode).
 - Direct builds fail in sequence: no `newuidmap` → install `uidmap`;
@@ -53,9 +53,10 @@ Workarounds for pre-fix images: interact through an inner shell
   namespaces fleet-wide → `--fakeroot` impossible; `proot` fallback
   does not trigger (container creation itself needs userns).
 - `docker`-tagged runners: same kernel gate (verified by failure).
-- Consequence: GitLab builds Docker images only; SIFs come from GitHub
-  Actions (root + userns available). The `sif-mirror` job republishes
-  GitHub SIFs as GitLab artifacts for users without github.com access.
+- Consequence: shared/docker runners build Docker images only. SIFs are
+  built by the manual `sif-build` job on the dedicated `apptainer`
+  runner instead, with `APPTAINER_TMPDIR` on the build volume because
+  the PIIC rootfs does not fit in the runner's `/tmp`.
 
 ## Registry lessons (Oct 2026)
 

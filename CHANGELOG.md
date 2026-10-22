@@ -42,3 +42,7 @@
 - Fail-open IMAGER/PIIC outages now surface as CI warnings: GitHub
   Actions annotations (`::warning title=…`) and colored `WARNING:` lines
   in GitLab job logs
+- GitLab `sif-build` no longer fills `/tmp`: apptainer's build temp and
+  cache moved to job-specific directories under `$CI_PROJECT_DIR`
+  (override with `SIF_TMPDIR` / `SIF_CACHEDIR`), cleaned on exit;
+  `--disable-cache` and `--force` reduce peak space and make reruns safe

@@ -5,7 +5,8 @@
 # Runners tagged `docker` provide the Docker daemon (host socket, no dind
 # service needed). Schedules are created in the GitLab UI (Build >
 # Pipeline schedules, e.g. weekly); manual runs via "Run pipeline" with
-# optional variables (RELEASE, DEBIAN=1, PIIC=1, ARCHIVE=1, SIF_TAGS).
+# optional variables (RELEASE, DEBIAN=1, PIIC=1, ARCHIVE=1, SIF_TAGS,
+# SIF_TMPDIR, SIF_MIN_FREE_GB).
 # Cache tags are pulled from the GitLab Container Registry first (when
 # present) and only fall back to Docker Hub, which avoids Hub rate limits
 # on repeat builds. The same tags are mirrored back after each build.
@@ -110,9 +111,9 @@ build:
 
 sif-build:
   # Build the SIFs directly on the `apptainer` runner, for users who can
-  # reach gitlab.lam.fr. The runner has no Docker: apptainer's docker://
-  # bootstrap pulls the image from the GitLab Container Registry instead.
-  # The per-tag def file rewrites `From:` on gildas-latest.def. Manual only.
+  # reach gitlab.lam.fr. The runner has no Docker: apptainer pulls the
+  # image from the GitLab Container Registry instead. The per-tag def
+  # file rewrites `From:` on gildas-latest.def. Manual only.
   stage: publish
   tags: [apptainer]
   timeout: 6h
@@ -130,20 +131,68 @@ sif-build:
   script:
     - |
       set -euo pipefail
-      apptainer --version || singularity --version
-      mkdir -p sifs
+
+      # Apptainer/Singularity unpack OCI layers under TMPDIR. The runner's
+      # default /tmp is small (and mounted nodev); the PIIC image does not
+      # fit there. Keep build temp and cache on the build volume instead,
+      # where the SIF artifacts live. Point SIF_TMPDIR/SIF_CACHEDIR at a
+      # larger scratch filesystem if the build volume is not big enough.
+      # (Leftover /tmp/build-temp-* from older runs can be removed once;
+      # the EXIT trap below cleans the new location.)
+      build_root="${SIF_TMPDIR:-${CI_PROJECT_DIR:-$PWD}/.apptainer-tmp}"
+      cache_root="${SIF_CACHEDIR:-${CI_PROJECT_DIR:-$PWD}/.apptainer-cache}"
+      build_tmp="${build_root}/job-${CI_JOB_ID:-$$}"
+      build_cache="${cache_root}/job-${CI_JOB_ID:-$$}"
+      export APPTAINER_TMPDIR="$build_tmp"
+      export SINGULARITY_TMPDIR="$build_tmp"
+      export APPTAINER_CACHEDIR="$build_cache"
+      export SINGULARITY_CACHEDIR="$build_cache"
+      export TMPDIR="$build_tmp"
+      mkdir -p "$build_tmp" "$build_cache" sifs
+
+      tmp_def=""
+      cleanup() {
+        rm -rf "$build_tmp" "$build_cache" 2>/dev/null || true
+        [ -z "$tmp_def" ] || rm -f "$tmp_def" 2>/dev/null || true
+      }
+      trap cleanup EXIT
+
+      echo "Build temp:  $build_tmp"
+      echo "Build cache: $build_cache"
+      df -h "$build_tmp" sifs || true
+      free_gb="$(df -Pk "$build_tmp" | awk 'NR==2 {print int($4 / 1024 / 1024)}')"
+      free_gb="${free_gb:-0}"
+      if [ -n "${SIF_MIN_FREE_GB:-}" ] && [ "$free_gb" -lt "$SIF_MIN_FREE_GB" ]; then
+        echo "ERROR: only ${free_gb} GiB free in $build_tmp; need at least ${SIF_MIN_FREE_GB} GiB (set SIF_TMPDIR or SIF_MIN_FREE_GB)." >&2
+        exit 1
+      fi
+
+      if command -v apptainer >/dev/null 2>&1; then
+        builder=apptainer
+      elif command -v singularity >/dev/null 2>&1; then
+        builder=singularity
+      else
+        echo "ERROR: neither apptainer nor singularity is installed" >&2
+        exit 1
+      fi
+      "$builder" --version
+
       for tag in ${SIF_TAGS:-latest latest-piic}; do
         # Build the per-tag def from gildas-latest.def. Write to a temp file:
         # when tag == latest, `def` equals the source file itself, and
         # redirecting `> "${def}"` would truncate the input before sed reads
         # it, leaving an empty definition ("no stages found in definition
         # file").
-        tmp_def="$(mktemp)"
+        tmp_def="$(mktemp -p "$build_tmp" gildas-def.XXXXXX)"
         : "${CI_REGISTRY_IMAGE:?CI_REGISTRY_IMAGE is not set}"
         sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" gildas-latest.def > "${tmp_def}"
         echo "Building gildas-${tag} from ${CI_REGISTRY_IMAGE}:${tag} ..."
-        apptainer build --fakeroot "sifs/gildas-${tag}.sif" "${tmp_def}"
+        # --disable-cache keeps the compressed OCI layers out of the build
+        # volume: the uncompressed rootfs alone is already the peak user.
+        # --force makes reruns overwrite a partial/previous SIF.
+        "$builder" build --fakeroot --disable-cache --force "sifs/gildas-${tag}.sif" "${tmp_def}"
         rm -f "${tmp_def}"
+        tmp_def=""
       done
   artifacts:
     paths: [sifs/]

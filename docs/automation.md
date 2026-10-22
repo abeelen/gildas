@@ -153,7 +153,12 @@ project container registry (on LAM:
 `registry.lam.fr/abeelen/gildas:latest`, short-lived registry
 credentials, nothing to configure).
 
-SIFs cannot be built on GitLab runners (user namespaces forbidden
-fleet-wide); the manual `sif-mirror` job republishes the GitHub-built
-SIFs as job artifacts instead, for users who can reach `gitlab.lam.fr`
-but not GitHub.
+SIFs are built by the manual `sif-build` job on the `apptainer` runner,
+from the GitLab registry, and published as `sifs/*.sif` job artifacts.
+Apptainer unpacks OCI layers into its temporary directory, and the PIIC
+image is too large for the runner's `/tmp`; the job therefore points
+`APPTAINER_TMPDIR` / `SINGULARITY_TMPDIR` and the caches at job-specific
+directories under `$CI_PROJECT_DIR`, cleaned up on exit. Set
+`SIF_TMPDIR` / `SIF_CACHEDIR` to a larger scratch filesystem if the
+build volume is not big enough, and `SIF_MIN_FREE_GB` for a preflight
+space check.
