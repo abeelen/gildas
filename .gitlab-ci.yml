@@ -75,8 +75,8 @@ sif-build:
   tags: [apptainer]
   timeout: 6h
   before_script:
-    - apk add --no-cache apptainer 2>/dev/null || apk add --no-cache singularity 2>/dev/null || true
-    - which apptainer || which singularity || (echo "WARNING: neither apptainer nor singularity found" >&2)
+    - 'apk add --no-cache apptainer 2>/dev/null || apk add --no-cache singularity 2>/dev/null || true'
+    - 'which apptainer || which singularity || (echo "WARNING: neither apptainer nor singularity found" >&2)'
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
@@ -87,13 +87,21 @@ sif-build:
       when: manual
   script:
     - |
+      set -euo pipefail
       apptainer --version || singularity --version
       mkdir -p sifs
       for tag in ${SIF_TAGS:-latest latest-piic}; do
-        def="gildas-${tag}.def"
-        sed "s|^From: .*|From: docker://${CI_REGISTRY_IMAGE}:${tag}|" gildas-latest.def > "${def}"
-        apptainer build "sifs/gildas-${tag}.sif" "${def}" 2>/dev/null || singularity build "sifs/gildas-${tag}.sif" "${def}" 2>/dev/null || true
-        rm -f "${def}"
+        # Build the per-tag def from gildas-latest.def. Write to a temp file:
+        # when tag == latest, `def` equals the source file itself, and
+        # redirecting `> "${def}"` would truncate the input before sed reads
+        # it, leaving an empty definition ("no stages found in definition
+        # file").
+        tmp_def="$(mktemp)"
+        : "${CI_REGISTRY_IMAGE:?CI_REGISTRY_IMAGE is not set}"
+        sed "s|^From: .*|From: ${CI_REGISTRY_IMAGE}:${tag}|" gildas-latest.def > "${tmp_def}"
+        echo "Building gildas-${tag} from ${CI_REGISTRY_IMAGE}:${tag} ..."
+        apptainer build --fakeroot "sifs/gildas-${tag}.sif" "${tmp_def}"
+        rm -f "${tmp_def}"
       done
   artifacts:
     paths: [sifs/]
