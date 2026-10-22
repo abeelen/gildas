@@ -21,6 +21,8 @@ GILDAS_ARCHIVE_URL = "https://www.iram.fr/~gildas/dist/archive/gildas"
 PIIC_ARCHIVE_URL = "https://www.iram.fr/~gildas/dist/archive/piic"
 IMAGER_URL = "https://share.oasu.u-bordeaux.fr/imager"
 IMAGER_LAST = "last"
+IMAGER_NONE = "none"  # sentinel: IMAGER deliberately not bundled (upstream unavailable)
+PIIC_NONE = "none"  # sentinel: PIIC deliberately not bundled (upstream unavailable)
 REQUEST_TIMEOUT = 30
 LATEST_DEF = "gildas-latest.def"
 NATIF_DEF = "gildas-natif.def"
@@ -100,8 +102,13 @@ def imager_release() -> List[str]:
 
 
 @functools.lru_cache(maxsize=1)
-def _cached_imager_versions() -> tuple:
-    return tuple(imager_release())
+def _cached_imager_versions() -> tuple | None:
+    """Live IMAGER list, or ``None`` when upstream is unreachable."""
+    try:
+        return tuple(imager_release())
+    except Exception as exc:  # network errors must never block image builds
+        logger.warning("Could not list IMAGER versions from %s (%s); building without IMAGER", IMAGER_URL, exc)
+        return None
 
 
 def imager_version_for_release(release: str, available: Sequence[str] | None = None) -> str:
@@ -112,21 +119,27 @@ def imager_version_for_release(release: str, available: Sequence[str] | None = N
     release : str
         GILDAS release identifier, e.g. ``"oct26a"``.
     available : sequence of str or None, optional
-        Known IMAGER versions. Defaults to the live upstream list.
+        Known IMAGER versions. Defaults to the live upstream list; when
+        that lookup fails, ``"none"`` is returned and IMAGER is skipped.
 
     Returns
     -------
     str
-        Matching IMAGER version (trailing letter stripped), or ``"last"``
-        when none matches (resolved to a concrete version live when possible).
+        Matching IMAGER version (trailing letter stripped), ``"last"``
+        when none matches, or ``"none"`` when the upstream is unreachable
+        (the image is then built with ``WITH_IMAGER=0``).
     """
     live = available is None
     if live:
         available = _cached_imager_versions()
+    if available is None:
+        return IMAGER_NONE
     cand = release[:-1] if release[-1:].isalpha() else release
     if cand in available:
         return cand
-    if live:
+    # Only resolve the floating alias when the listing actually worked;
+    # otherwise the upstream is down and we would just time out again.
+    if live and available:
         resolved = _resolve_imager_alias(IMAGER_LAST)
         if resolved != IMAGER_LAST:
             logger.warning("No IMAGER for '%s', using '%s'", release, resolved)
@@ -185,16 +198,44 @@ def _image_labels(tag: str) -> dict | None:
 
 
 def _imager_stale(tag: str, expected: str) -> bool:
-    """True if published tag bundles an outdated IMAGER (fail-open: False)."""
-    if expected == IMAGER_LAST:
-        return False
+    """True if published tag bundles an outdated or absent IMAGER (fail-open: False).
+
+    Images built while the IMAGER upstream was unreachable carry the
+    ``none`` sentinel; they are reported stale as soon as the upstream can
+    be queried again, so a later CI run rebuilds them with IMAGER.
+    """
+    if expected == IMAGER_NONE:
+        return False  # upstream still unavailable: nothing better to build
     labels = _image_labels(tag)
     if labels is None:
         return False
     rec = labels.get("abeelen.gildas.imager-version", "")
+    if rec == IMAGER_NONE or labels.get("abeelen.gildas.imager-bundled") == "0":
+        return True  # built without IMAGER; rebuild now that it is reachable
+    if expected == IMAGER_LAST:
+        return False
     if not rec:
         return True
     return rec != expected and rec != IMAGER_LAST
+
+
+def _piic_stale(tag: str, expected: str) -> bool:
+    """True if published tag should bundle PIIC but does not (fail-open: False).
+
+    Mirrors :func:`_imager_stale`: a ``-piic`` image built while the
+    tarball was unavailable records ``none`` in
+    ``abeelen.gildas.piic-version`` (or ``piic-bundled=0``); it is
+    reported stale once the release is listed upstream again.
+    """
+    if expected == PIIC_NONE:
+        return False  # upstream still unavailable: nothing better to build
+    labels = _image_labels(tag)
+    if labels is None:
+        return False
+    rec = labels.get("abeelen.gildas.piic-version", "")
+    if rec == PIIC_NONE or labels.get("abeelen.gildas.piic-bundled") == "0":
+        return True
+    return bool(rec) and rec != expected and rec != PIIC_NONE
 
 
 def _docker_tags() -> List[str]:
@@ -258,7 +299,12 @@ class ReleaseSets:
 
 
 def _load_release_sets_uncached(include_archive=False, archive_gildas=False) -> ReleaseSets:
-    """Fetch Hub tags + IRAM listings in parallel (archives only when needed)."""
+    """Fetch Hub tags + IRAM listings in parallel (archives only when needed).
+
+    PIIC listings are fail-open: when IRAM cannot be reached, PIIC is
+    treated as unavailable so GILDAS-only builds still proceed. A later
+    run rebuilds affected ``-piic`` tags via PIIC drift detection.
+    """
     need_g = include_archive or archive_gildas
     with ThreadPoolExecutor(max_workers=5) as p:
         jobs = {"tags": p.submit(_docker_tags), "gildas": p.submit(gildas_release, "gildas"),
@@ -267,8 +313,18 @@ def _load_release_sets_uncached(include_archive=False, archive_gildas=False) -> 
             jobs["ag"] = p.submit(gildas_release, "gildas", True)
         if include_archive:
             jobs["ap"] = p.submit(gildas_release, "piic", True)
-        g = lambda k: jobs[k].result() if k in jobs else []
-        return ReleaseSets(g("tags"), g("gildas"), g("ag"), g("piic"), g("ap"))
+
+        def result(key):
+            return jobs[key].result() if key in jobs else []
+
+        def piic_result(key):
+            try:
+                return result(key)
+            except Exception as exc:  # PIIC outage must not block GILDAS builds
+                logger.warning("Could not list PIIC releases (%s); treating PIIC as unavailable", exc)
+                return []
+
+        return ReleaseSets(result("tags"), result("gildas"), result("ag"), piic_result("piic"), piic_result("ap"))
 
 
 @functools.lru_cache(maxsize=8)
@@ -298,6 +354,8 @@ class BuildCommand:
         Alpine base (default False = Debian).
     stale_imager : bool, optional
         Published tag bundles an outdated IMAGER.
+    stale_piic : bool, optional
+        Published tag should bundle PIIC but does not.
     """
     section: str
     release: str
@@ -305,6 +363,7 @@ class BuildCommand:
     command: str
     alpine: bool = False
     stale_imager: bool = False
+    stale_piic: bool = False
 
 
 @dataclass
@@ -361,7 +420,11 @@ def _docker_cmd(gildas, agildas, piic, apiic, release, *, with_piic, dockerfile,
     else:
         main, latest, alias, target = f"{release}{suf}", f"latest{suf}", "latest" if alpine else None, "gildas"
     imager = imager or imager_version_for_release(release)
-    return _docker_build_push(main, latest, ["--target " + target, g_arg, p_arg, f"--build-arg release={shlex.quote(release)}", f"--build-arg IMAGER_VERSION={shlex.quote(imager)}"], dockerfile, tag_latest, alias)
+    imager_args = [f"--build-arg IMAGER_VERSION={shlex.quote(imager)}"]
+    if imager == IMAGER_NONE:
+        imager_args.append("--build-arg WITH_IMAGER=0")
+    piic_args = [f"--build-arg PIIC_VERSION={shlex.quote(release)}"] if with_piic else []
+    return _docker_build_push(main, latest, ["--target " + target, g_arg, p_arg, f"--build-arg release={shlex.quote(release)}", *imager_args, *piic_args], dockerfile, tag_latest, alias)
 
 
 def build_without_piic_command(gildas, archived_gildas, release, dockerfile="Dockerfile.alpine", tag_latest=False, imager_version=None) -> str:
@@ -459,8 +522,9 @@ def get_release_build_commands(release_name, missing_only=False, dockerfile="Doc
         c = BuildCommand(section, release_name, False, cmd, alpine)
         tag = _image_tag(c)
         c = BuildCommand(section, release_name, tag in sets.tags, cmd, alpine,
-                         fresh and tag in sets.tags and _imager_stale(tag, expected))
-        if not missing_only or not c.in_dockerhub or c.stale_imager:
+                         fresh and tag in sets.tags and _imager_stale(tag, expected),
+                         with_piic and release_name in sets.piic and tag in sets.tags and _piic_stale(tag, release_name))
+        if not missing_only or not c.in_dockerhub or c.stale_imager or c.stale_piic:
             out.append(c)
     return out
 
@@ -521,6 +585,8 @@ def natif_command(release, sets, dockerfile="Dockerfile.alpine", imager_version=
     has_piic = release in sets.piic or release in sets.archived_piic
     imager_version = imager_version or imager_version_for_release(release)
     env = [f"SINGULARITYENV_GILDAS_RELEASE={shlex.quote(release)}", f"SINGULARITYENV_IMAGER_VERSION={shlex.quote(imager_version)}"]
+    if imager_version == IMAGER_NONE:
+        env.append("SINGULARITYENV_WITH_IMAGER=0")
     if release not in sets.gildas:
         env.append(f"SINGULARITYENV_GILDAS_URL={GILDAS_ARCHIVE_URL}")
     if has_piic and release not in sets.piic:
@@ -597,7 +663,14 @@ def _format_comment(cmd: BuildCommand) -> str:
     tail = "launch :" if cmd.section == SECTION_WITH_PIIC and not cmd.in_dockerhub else ":"
     if cmd.in_dockerhub:
         base = f"# * {tag} already in dockerhub"
-        return f"{base} but IMAGER outdated, rebuilding :" if cmd.stale_imager else f"{base} {tail}"
+        missing = []
+        if cmd.stale_imager:
+            missing.append("IMAGER outdated")
+        if cmd.stale_piic:
+            missing.append("PIIC missing")
+        if missing:
+            return f"{base} but {' and '.join(missing)}, rebuilding :"
+        return f"{base} {tail}"
     return f"# * {tag} not in dockerhub{' launch :' if cmd.section == SECTION_WITH_PIIC else ''}"
 
 
@@ -704,7 +777,7 @@ def print_missing_build_commands(force=False, dockerfile="Dockerfile.alpine", ex
 @click.option("--archive", "include_archive", is_flag=True, default=False, help="Include archived releases.")
 @click.option("--singularity", "singularity", is_flag=True, default=False, help="Emit singularity builds via gildas-latest.def (From: rewritten per tag).")
 @click.option("--natif", "natif", is_flag=True, default=False, help="Emit native singularity builds (.def from tarballs).")
-@click.option("--imager-version", "imager_version", default=None, help="Pin IMAGER version (default auto-mapped).")
+@click.option("--imager-version", "imager_version", default=None, help="Pin IMAGER version (default auto-mapped; 'none' skips IMAGER; auto-skips when upstream is unreachable).")
 @click.option("--execute", is_flag=True, help="Run commands instead of printing.")
 @click.option("--log-dir", "log_dir", default=None, help="With --execute, tee output to <dir>/<tag>.log.")
 def main(release_name=None, verbose=0, force=False, debian=False, piic_only=False, execute=False, log_dir=None, include_archive=False, singularity=False, natif=False, imager_version=None) -> None:

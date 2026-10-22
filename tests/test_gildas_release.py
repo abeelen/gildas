@@ -56,6 +56,48 @@ def test_imager_version_mapping():
     assert imager_version_for_release("oct26", ["oct26"]) == "oct26"
 
 
+def test_cached_imager_versions_fail_open(monkeypatch):
+    import gildas_release as gr
+
+    def down():
+        raise OSError("upstream unreachable")
+
+    monkeypatch.setattr(gr, "imager_release", down)
+    gr._cached_imager_versions.cache_clear()
+    try:
+        assert gr._cached_imager_versions() is None
+    finally:
+        gr._cached_imager_versions.cache_clear()
+
+
+def test_imager_lookup_failure_skips_imager_without_second_request(monkeypatch):
+    import gildas_release as gr
+
+    monkeypatch.setattr(gr, "_cached_imager_versions", lambda: None)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("alias resolution must be skipped when listing failed")
+
+    monkeypatch.setattr(gr, "_resolve_imager_alias", unexpected)
+    assert imager_version_for_release("oct26a") == "none"
+
+
+def test_build_sets_with_imager_zero_when_upstream_unreachable():
+    cmd = build_without_piic_command(
+        ["oct26a"], [], "oct26a", imager_version="none"
+    )
+    assert "--build-arg IMAGER_VERSION=none" in cmd
+    assert "--build-arg WITH_IMAGER=0" in cmd
+
+
+def test_natif_disables_imager_when_upstream_unreachable():
+    sets = make_sets()
+    cmd = natif_command("oct26a", sets, imager_version="none")
+    assert cmd is not None
+    assert "SINGULARITYENV_WITH_IMAGER=0" in cmd.command
+    assert "SINGULARITYENV_IMAGER_VERSION=none" in cmd.command
+
+
 def test_build_without_piic_alpine_is_default():
     cmd = build_without_piic_command(["oct26a"], [], "oct26a", imager_version="oct26")
     assert "--tag abeelen/gildas:oct26a-alpine " in cmd
@@ -104,6 +146,7 @@ def test_build_with_piic_needs_both_tarballs():
     assert "--tag abeelen/gildas:jul26a-piic-alpine " in cmd
     assert "GILDAS_URL=https://www.iram.fr/~gildas/dist/archive/gildas" in cmd
     assert "PIIC_URL" not in cmd
+    assert "--build-arg PIIC_VERSION=jul26a" in cmd
 
 
 def test_release_commands_pair_main_piic_with_archived_gildas():
@@ -182,12 +225,17 @@ def test_natif_commands_follow_loaded_sets():
     assert [c.release for c in cmds] == ["oct26a"]
 
 
-def test_singularity_command():
+def test_singularity_command(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gildas-latest.def").write_text(
+        "Bootstrap: docker\nFrom: abeelen/gildas:latest\n"
+    )
     cmd = BuildCommand(SECTION_WITH_PIIC, "jul26a", False, "x", True)
     assert singularity_command(cmd) == (
-        'sed "s|^From: .*|From: abeelen/gildas:jul26a-piic-alpine|" gildas-latest.def > /tmp/sif-build.def'
-        " && singularity build gildas-jul26a-piic-alpine.sif /tmp/sif-build.def"
+        "singularity build gildas-jul26a-piic-alpine.sif gildas-jul26a-piic-alpine.def"
     )
+    dest = tmp_path / "gildas-jul26a-piic-alpine.def"
+    assert "From: abeelen/gildas:jul26a-piic-alpine" in dest.read_text()
 
 
 def test_print_missing_piic_only(monkeypatch, capsys):
@@ -262,10 +310,63 @@ def test_imager_stale_matrix(monkeypatch):
         ({"abeelen.gildas.imager-version": "oct26"}, "nov26", True),
         ({"abeelen.gildas.imager-version": "last"}, "nov26", False),
         ({"abeelen.gildas.imager-version": "oct26"}, "last", False),
+        # Built while IMAGER was unreachable: rebuild once it is back.
+        ({"abeelen.gildas.imager-version": "none"}, "oct26", True),
+        ({"abeelen.gildas.imager-version": "none"}, "last", True),
+        ({"abeelen.gildas.imager-version": "none"}, "none", False),
+        ({"abeelen.gildas.imager-bundled": "0"}, "oct26", True),
     ]
     for labels, expected, stale in cases:
         monkeypatch.setattr(gr, "_image_labels", lambda tag: labels)
         assert gr._imager_stale("oct26a", expected) is stale
+
+
+def test_piic_stale_matrix(monkeypatch):
+    import gildas_release as gr
+
+    cases = [
+        (None, "jul26a", False),  # unreadable labels: never rebuild on network errors
+        ({}, "jul26a", False),  # pre-label image: assume it was built with PIIC
+        ({"abeelen.gildas.piic-version": "jul26a"}, "jul26a", False),
+        ({"abeelen.gildas.piic-version": "jul26a"}, "oct26a", True),
+        ({"abeelen.gildas.piic-version": "none"}, "jul26a", True),
+        ({"abeelen.gildas.piic-bundled": "0"}, "jul26a", True),
+        ({"abeelen.gildas.piic-version": "none"}, "none", False),
+    ]
+    for labels, expected, stale in cases:
+        monkeypatch.setattr(gr, "_image_labels", lambda tag: labels)
+        assert gr._piic_stale("jul26a-piic-alpine", expected) is stale
+
+
+def test_piic_listing_failure_is_fail_open(monkeypatch):
+    import gildas_release as gr
+
+    def fake(package, archive=False):
+        if package == "piic":
+            raise OSError("upstream unreachable")
+        return ["oct26a"]
+
+    monkeypatch.setattr(gr, "gildas_release", fake)
+    monkeypatch.setattr(gr, "_docker_tags", lambda: [])
+    sets = gr._load_release_sets_uncached()
+    assert sets.gildas == ["oct26a"]
+    assert sets.piic == [] and sets.archived_piic == []
+
+
+def test_missing_piic_tag_is_rebuilt_when_piic_returns(monkeypatch):
+    import gildas_release as gr
+
+    sets = make_sets(tags=["jul26a-piic-alpine"])
+    monkeypatch.setattr(
+        gr, "_image_labels",
+        lambda tag: {"abeelen.gildas.piic-version": "none", "abeelen.gildas.piic-bundled": "0"},
+    )
+    cmds = get_release_build_commands(
+        "jul26a", missing_only=True, sets=sets, archive_gildas=True, imager_version="jul26"
+    )
+    piic = [c for c in cmds if c.section == SECTION_WITH_PIIC]
+    assert len(piic) == 1 and piic[0].stale_piic
+    assert "PIIC missing" in gr._format_comment(piic[0])
 
 
 def test_stale_imager_rebuilds_present_tag(monkeypatch):
@@ -286,6 +387,26 @@ def test_stale_imager_rebuilds_present_tag(monkeypatch):
     )
     cmds = get_release_build_commands(
         "oct26a", missing_only=True, sets=sets, imager_version="nov26"
+    )
+    assert cmds == []
+
+
+def test_missing_tag_built_without_imager_is_rebuilt_when_upstream_returns(monkeypatch):
+    import gildas_release as gr
+
+    sets = make_sets(tags=["oct26a-alpine"])
+    monkeypatch.setattr(
+        gr, "_image_labels",
+        lambda tag: {"abeelen.gildas.imager-version": "none", "abeelen.gildas.imager-bundled": "0"},
+    )
+    # Upstream reachable again: the IMAGER-less image is stale.
+    cmds = get_release_build_commands(
+        "oct26a", missing_only=True, sets=sets, imager_version="oct26"
+    )
+    assert len(cmds) == 1 and cmds[0].stale_imager
+    # Upstream still down: nothing better to build, so keep the image.
+    cmds = get_release_build_commands(
+        "oct26a", missing_only=True, sets=sets, imager_version="none"
     )
     assert cmds == []
 

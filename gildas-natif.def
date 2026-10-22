@@ -149,7 +149,7 @@ From: alpine:latest
         rm -rf "/${imdir}"
     else
         echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"
-        echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version
+        echo "none (not bundled)" > /etc/imager-version
     fi
 
     # Optional PIIC installation (warns when the tarball is missing instead
@@ -161,7 +161,7 @@ From: alpine:latest
         echo "${release}" > /etc/piic-version
     else
         echo "WARNING: no piic-exe-${release}.tar.xz at ${piic_url}, skipping PIIC" >&2
-        echo "none (unresolved)" > /etc/piic-version
+        echo "none (not bundled)" > /etc/piic-version
     fi
 
     # Auto-detect GAG_EXEC_SYSTEM (musl layout differs from glibc).

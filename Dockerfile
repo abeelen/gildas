@@ -144,8 +144,12 @@ ARG WITH_IMAGER=1
 
 RUN set -eux -o pipefail; \
     mkdir -p /imager-exe; \
-    echo "${IMAGER_VERSION:-none} (unresolved)" > /etc/imager-version; \
-    if [ "${WITH_IMAGER}" != "1" ]; then echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"; exit 0; fi; \
+    if [ "${WITH_IMAGER}" != "1" ]; then \
+      echo "Skipping IMAGER (WITH_IMAGER=${WITH_IMAGER})"; \
+      echo "none (not bundled)" > /etc/imager-version; \
+      exit 0; \
+    fi; \
+    echo "${IMAGER_VERSION} (unresolved)" > /etc/imager-version; \
     cd /tmp; \
     curl -fSL --retry 3 --connect-timeout 20 "${IMAGER_URL}/imager-${IMAGER_VERSION}.tgz" -o imager-dl.tgz; \
     set +o pipefail; IMDIR="$(tar tzf imager-dl.tgz | head -n 1 | cut -d/ -f1)"; set -o pipefail; \
@@ -170,6 +174,7 @@ ARG release
 ENV release=${release}
 ARG IMAGER_VERSION=last
 ENV IMAGER_VERSION=${IMAGER_VERSION}
+ARG WITH_IMAGER=1
 
 COPY --from=builder /gildas-exe-$release /gildas-exe-$release
 COPY --from=builder /imager-exe /imager-exe
@@ -226,14 +231,15 @@ RUN set -eux -o pipefail; \
       done; \
     fi
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh && echo "none" > /etc/piic-version
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && echo "none (not bundled)" > /etc/piic-version
 
 LABEL org.opencontainers.image.title="GILDAS" \
       org.opencontainers.image.revision="${release}" \
       abeelen.gildas.release="${release}" \
       abeelen.gildas.base="debian" \
       abeelen.gildas.target="gildas" \
-      abeelen.gildas.imager-version="${IMAGER_VERSION}"
+      abeelen.gildas.imager-version="${IMAGER_VERSION}" \
+      abeelen.gildas.imager-bundled="${WITH_IMAGER}"
 # NOTE: /etc/imager-version and /etc/piic-version inside the image are
 # authoritative for bundled component versions (labels record build args).
 
@@ -247,18 +253,23 @@ ARG release
 ENV release=${release}
 ARG PIIC_URL=https://www.iram.fr/~gildas/dist
 ENV PIIC_URL=$PIIC_URL
+ARG PIIC_VERSION=${release}
+ARG WITH_PIIC=1
 
 WORKDIR /
 
 # Do not mask real errors with `|| true`: warn when the tarball is missing,
 # fail when download is corrupt.
 RUN set -eux -o pipefail; \
-    if curl -fSL --retry 3 --connect-timeout 20 "$PIIC_URL/piic-exe-$release.tar.xz" -o "/tmp/piic-exe-$release.tar.xz"; then \
+    if [ "${WITH_PIIC}" != "1" ]; then \
+      echo "Skipping PIIC (WITH_PIIC=${WITH_PIIC})" >&2; \
+      echo "none (not bundled)" > /etc/piic-version; \
+    elif curl -fSL --retry 3 --connect-timeout 20 "$PIIC_URL/piic-exe-$release.tar.xz" -o "/tmp/piic-exe-$release.tar.xz"; then \
       tar xJf "/tmp/piic-exe-$release.tar.xz" && rm -f "/tmp/piic-exe-$release.tar.xz"; \
       echo "$release" > /etc/piic-version; \
     else \
       echo "WARNING: no piic-exe-$release.tar.xz at $PIIC_URL, skipping PIIC layer" >&2; \
-      echo "none (unresolved)" > /etc/piic-version; \
+      echo "none (not bundled)" > /etc/piic-version; \
     fi
 
 SHELL ["/bin/bash", "-c"]
@@ -289,4 +300,6 @@ RUN set -eux -o pipefail; \
       done; \
     fi
 
-LABEL abeelen.gildas.target="gildas-piic"
+LABEL abeelen.gildas.target="gildas-piic" \
+      abeelen.gildas.piic-version="${PIIC_VERSION}" \
+      abeelen.gildas.piic-bundled="${WITH_PIIC}"
