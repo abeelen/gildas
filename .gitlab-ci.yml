@@ -122,9 +122,6 @@ sif-build:
   stage: publish
   tags: [apptainer]
   timeout: 6h
-  before_script:
-    - 'apk add --no-cache apptainer ca-certificates 2>/dev/null || apk add --no-cache singularity ca-certificates 2>/dev/null || true'
-    - 'which apptainer || which singularity || (echo "WARNING: neither apptainer nor singularity found" >&2)'
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       when: never
