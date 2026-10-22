@@ -6,8 +6,11 @@
 # service needed). Schedules are created in the GitLab UI (Build >
 # Pipeline schedules, e.g. weekly); manual runs via "Run pipeline" with
 # optional variables (RELEASE, DEBIAN=1, PIIC=1, ARCHIVE=1, SIF_TAGS).
-# SIFs are built natively on the dedicated `apptainer` runner (docker://
-# bootstrap straight from Docker Hub, no Docker installed there).
+# Cache tags are pulled from the GitLab Container Registry first (when
+# present) and only fall back to Docker Hub, which avoids Hub rate limits
+# on repeat builds. The same tags are mirrored back after each build.
+# SIFs are built natively on the dedicated `apptainer` runner from the
+# GitLab registry (no Docker installed there).
 
 stages: [plan, build, publish]
 
@@ -42,6 +45,10 @@ build:
     - apk add --no-cache python3 py3-pip
     - pip install -q --break-system-packages click requests beautifulsoup4
     - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+    - |
+      if [ -n "${CI_REGISTRY:-}" ] && [ -n "${CI_REGISTRY_USER:-}" ] && [ -n "${CI_REGISTRY_PASSWORD:-}" ]; then
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+      fi
   script:
     - docker info >/dev/null # fail fast without Docker access
     - if [ "$DEBIAN" = "1" ] && [ "$FAMILY" != "debian" ]; then exit 0; fi
@@ -52,14 +59,49 @@ build:
     - if [ "$ARCHIVE" = "1" ]; then ARGS="$ARGS --archive"; fi
     - CACHE_TAGS="latest-alpine latest-piic-alpine"
     - if [ "$FAMILY" = "debian" ]; then CACHE_TAGS="latest-debian latest-piic-debian"; fi
-    - for tag in $CACHE_TAGS; do docker pull -q abeelen/gildas:"$tag" || true; done
+    - |
+      # Prefer the GitLab mirror; fall back to Docker Hub on first run.
+      for tag in $CACHE_TAGS; do
+        if [ -n "${CI_REGISTRY_IMAGE:-}" ] && docker pull -q "$CI_REGISTRY_IMAGE:$tag" 2>/dev/null; then
+          docker tag "$CI_REGISTRY_IMAGE:$tag" "abeelen/gildas:$tag"
+          echo "Using GitLab registry cache for $tag"
+        elif docker pull -q "abeelen/gildas:$tag" 2>/dev/null; then
+          echo "Using Docker Hub cache for $tag"
+        else
+          echo "No cached image for $tag"
+        fi
+      done
     # shellcheck disable=SC2086
     - ./gildas_release.py $ARGS --execute --log-dir logs
     - |
-      if [ "$FAMILY" = "alpine" ] && docker image inspect abeelen/gildas:latest >/dev/null 2>&1; then
-        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-        docker tag abeelen/gildas:latest "$CI_REGISTRY_IMAGE:latest"
-        docker push "$CI_REGISTRY_IMAGE:latest"
+      # Mirror the cache tags (and the unsuffixed aliases used by sif-build)
+      # back to the GitLab registry for the next run.
+      if [ -n "${CI_REGISTRY_IMAGE:-}" ] && [ -n "${CI_REGISTRY_USER:-}" ] && [ -n "${CI_REGISTRY_PASSWORD:-}" ]; then
+        if [ "$FAMILY" = "alpine" ]; then
+          # The registry mirror is only a cache: refresh the floating aliases
+          # from Docker Hub so a stale GitLab copy cannot be republished.
+          for alias in latest latest-piic; do
+            if docker pull -q "abeelen/gildas:$alias" 2>/dev/null; then
+              docker tag "abeelen/gildas:$alias" "abeelen/gildas:${alias}-alpine"
+            elif docker image inspect "abeelen/gildas:${alias}-alpine" >/dev/null 2>&1; then
+              docker tag "abeelen/gildas:${alias}-alpine" "abeelen/gildas:$alias"
+            fi
+          done
+        fi
+        for tag in $CACHE_TAGS; do
+          if docker image inspect "abeelen/gildas:$tag" >/dev/null 2>&1; then
+            docker tag "abeelen/gildas:$tag" "$CI_REGISTRY_IMAGE:$tag"
+            docker push -q "$CI_REGISTRY_IMAGE:$tag"
+          fi
+        done
+        if [ "$FAMILY" = "alpine" ]; then
+          for tag in latest latest-piic; do
+            if docker image inspect "abeelen/gildas:$tag" >/dev/null 2>&1; then
+              docker tag "abeelen/gildas:$tag" "$CI_REGISTRY_IMAGE:$tag"
+              docker push -q "$CI_REGISTRY_IMAGE:$tag"
+            fi
+          done
+        fi
       fi
   artifacts:
     paths: [logs/]
@@ -69,8 +111,8 @@ build:
 sif-build:
   # Build the SIFs directly on the `apptainer` runner, for users who can
   # reach gitlab.lam.fr. The runner has no Docker: apptainer's docker://
-  # bootstrap pulls the image straight from Docker Hub instead. The
-  # per-tag def file rewrites `From:` on gildas-latest.def. Manual only.
+  # bootstrap pulls the image from the GitLab Container Registry instead.
+  # The per-tag def file rewrites `From:` on gildas-latest.def. Manual only.
   stage: publish
   tags: [apptainer]
   timeout: 6h
