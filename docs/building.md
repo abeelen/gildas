@@ -36,12 +36,17 @@ correctly and only builds what is missing.
   releases).
 - `WITH_IMAGER=1` (default `1`): build and ship the standalone IMAGER
   (`imager`, `viewer`, plus other IMAGER-only programs, exposed as
-  `/usr/local/bin` wrappers). Set `WITH_IMAGER=0` to skip it.
+  `/usr/local/bin` wrappers). Set `WITH_IMAGER=0` to skip it; the image
+  then labels itself `abeelen.gildas.imager-version="none"` /
+  `abeelen.gildas.imager-bundled="0"` and writes
+  `none (not bundled)` to `/etc/imager-version`.
 - `IMAGER_VERSION` (default `last`): IMAGER tarball version, e.g.
   `oct26` (see https://imager.oasu.u-bordeaux.fr). Note the schemes
   differ — GILDAS releases carry a letter suffix (`oct26a`) while
   IMAGER versions do not (`oct26`) — so never reuse the GILDAS
   release name here; leave `last` or pin an explicit IMAGER version.
+  `IMAGER_VERSION=none` (used automatically by `gildas_release.py`
+  when the upstream is unreachable) implies `WITH_IMAGER=0`.
 - `GAG_USE_SANITIZE=no` (default): leave disabled (crashes otherwise).
 
 ## PIIC
@@ -51,6 +56,14 @@ Starting with oct19a, PIIC is included in the container. The multi-stage
 
 - `gildas` : image without PIIC
 - `gildas-piic` : image including PIIC
+
+`-piic` images label `abeelen.gildas.piic-version` /
+`abeelen.gildas.piic-bundled` and write `/etc/piic-version` (which reads
+`none (not bundled)` when the tarball was unavailable, and is
+authoritative). `WITH_PIIC=0` skips the download explicitly;
+`PIIC_VERSION` defaults to the release name and is what the label
+records, so `gildas_release.py` can later detect a PIIC-less tag and
+rebuild it once the tarball appears.
 
 To build the PIIC image for a given release (missing PIIC tarballs
 warn instead of silently producing a GILDAS-only image thanks to the

@@ -62,15 +62,35 @@ releases lag behind GILDAS ones — see `--piic`).
 GILDAS/IMAGER coupling is automatic (`oct26a` →
 `--build-arg IMAGER_VERSION=oct26`, `--imager-version` overrides; when
 no matching IMAGER exists yet, the floating `last` is resolved to
-whatever it currently points to, with a warning).
+whatever it currently points to, with a warning). The IMAGER listing is
+**fail-open**: if `share.oasu.u-bordeaux.fr` is unreachable (offline CI,
+firewall), the script logs a warning and emits
+`--build-arg IMAGER_VERSION=none --build-arg WITH_IMAGER=0`, so the image
+is built without IMAGER instead of failing on the download. Such images
+carry the `abeelen.gildas.imager-version="none"` /
+`abeelen.gildas.imager-bundled="0"` labels and `/etc/imager-version`
+reads `none (not bundled)`, which is how a later run detects them. Once
+the upstream answers again, the drift check rebuilds those tags with
+IMAGER. Pass `--imager-version none` to skip IMAGER explicitly, or a
+concrete version like `oct26` to pin it without querying upstream.
 
-Missing-tag detection also covers IMAGER drift, for main-tree
+Missing-tag detection also covers IMAGER and PIIC drift, for main-tree
 releases: the script compares the expected IMAGER version against the
 `abeelen.gildas.imager-version` image label and re-emits the build when
 they differ — so a release built while its IMAGER was not out yet is
-rebuilt once the matching IMAGER appears. Unreadable labels never
-trigger rebuilds, pre-label images rebuild once, and archived releases
-are immutable snapshots matched by tag existence only.
+rebuilt once the matching IMAGER appears. Likewise, `-piic` images carry
+`abeelen.gildas.piic-version` / `abeelen.gildas.piic-bundled`: if a tag
+was built without PIIC (`none` / `0`), it is rebuilt once the release
+appears in the upstream PIIC tree. Unreadable labels never trigger
+rebuilds, pre-label GILDAS images rebuild once (pre-label `-piic` images
+are assumed to have PIIC, to avoid churning every existing tag), and
+archived releases are immutable snapshots matched by tag existence only.
+
+PIIC listing is fail-open too: when `www.iram.fr` cannot be reached for
+the PIIC tree, the script logs a warning and emits GILDAS-only commands
+instead of aborting; `-piic` tags are then built on the next run that can
+read the listing. The PIIC download inside the Dockerfile was already
+fail-open and now writes `none (not bundled)` to `/etc/piic-version`.
 
 With `--execute --log-dir logs`, each build tees full output to
 `logs/<tag>.log` and prints only the tail. `tests/` covers the tag,

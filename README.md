@@ -133,9 +133,11 @@ wrappers that select their own tree (a flavor never shadows a GILDAS
 program of the same name).
 
 Images are self-describing: `docker inspect` shows `abeelen.gildas.*`
-labels (release, base, target, IMAGER version), and
+labels (release, base, target, IMAGER/PIIC version and
+`imager-bundled` / `piic-bundled` flags), and
 `/etc/imager-version` / `/etc/piic-version` inside the image record the
-bundled component versions authoritatively (`none` when absent).
+bundled component versions authoritatively (`none (not bundled)` when
+absent, e.g. because the upstream was unreachable at build time).
 
 ### Usage with Docker
 

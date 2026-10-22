@@ -29,3 +29,13 @@
 - `clic` ungated from the upstream `GAG_USE_SANITIZE` build gate;
   `gildas-natif.def` parity with `Dockerfile`; `latest`/`latest-piic`
   tracked per family
+- IMAGER upstream outage no longer aborts builds: `gildas_release.py`
+  skips IMAGER (`IMAGER_VERSION=none`, `WITH_IMAGER=0`) when
+  `share.oasu.u-bordeaux.fr` is unreachable, records it in the
+  `abeelen.gildas.imager-bundled` label and `/etc/imager-version`, and
+  rebuilds the tag with IMAGER once the upstream is back
+- Same treatment for PIIC: listing failures are fail-open (GILDAS-only
+  builds continue), `-piic` images record `abeelen.gildas.piic-version` /
+  `piic-bundled` plus `none (not bundled)` in `/etc/piic-version`, and
+  tags built without PIIC are rebuilt once the release reappears
+  upstream
