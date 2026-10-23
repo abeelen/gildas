@@ -77,9 +77,11 @@ def test_ci_warning_github_annotation(monkeypatch, capsys):
     monkeypatch.delenv("GITLAB_CI", raising=False)
     gr._ci_warning("IMAGER not bundled", "upstream unreachable")
 
-    out = capsys.readouterr().out
-    assert out.startswith("::warning title=IMAGER not bundled::")
-    assert "upstream unreachable" in out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    err = captured.err
+    assert err.startswith("::warning title=IMAGER not bundled::")
+    assert "upstream unreachable" in err
 
 
 def test_ci_warning_gitlab_log(monkeypatch, capsys):
@@ -89,8 +91,9 @@ def test_ci_warning_gitlab_log(monkeypatch, capsys):
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     gr._ci_warning("PIIC not bundled", "listing failed")
 
-    out = capsys.readouterr().out
-    assert "WARNING: PIIC not bundled: listing failed" in out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "WARNING: PIIC not bundled: listing failed" in captured.err
 
 
 def test_ci_warning_plain_terminal(monkeypatch, capsys):
@@ -100,7 +103,9 @@ def test_ci_warning_plain_terminal(monkeypatch, capsys):
     monkeypatch.delenv("GITLAB_CI", raising=False)
     gr._ci_warning("IMAGER not bundled", "offline")
 
-    assert capsys.readouterr().out == "WARNING: IMAGER not bundled: offline\n"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "WARNING: IMAGER not bundled: offline\n"
 
 
 def test_imager_listing_failure_emits_ci_warning(monkeypatch, capsys):
@@ -118,9 +123,12 @@ def test_imager_listing_failure_emits_ci_warning(monkeypatch, capsys):
     finally:
         gr._cached_imager_versions.cache_clear()
 
-    out = capsys.readouterr().out
-    assert "::warning title=IMAGER not bundled::" in out
-    assert "IMAGER_VERSION=none" in out
+    captured = capsys.readouterr()
+    # stdout must stay clean: workflows capture it to resolve build commands,
+    # and a ::warning line there previously broke the generated shell.
+    assert captured.out == ""
+    assert "::warning title=IMAGER not bundled::" in captured.err
+    assert "IMAGER_VERSION=none" in captured.err
 
 
 def test_imager_lookup_failure_skips_imager_without_second_request(monkeypatch):
@@ -411,7 +419,9 @@ def test_piic_listing_failure_is_fail_open(monkeypatch, capsys):
     sets = gr._load_release_sets_uncached()
     assert sets.gildas == ["oct26a"]
     assert sets.piic == [] and sets.archived_piic == []
-    assert "WARNING: PIIC not bundled:" in capsys.readouterr().out
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "WARNING: PIIC not bundled:" in captured.err
 
 
 def test_missing_piic_tag_is_rebuilt_when_piic_returns(monkeypatch):

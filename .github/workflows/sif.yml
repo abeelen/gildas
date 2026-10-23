@@ -101,8 +101,10 @@ jobs:
       - run: pip install click requests beautifulsoup4
       - name: Resolve release and definition file
         id: sel
+        env:
+          NATIV_RELEASE: ${{ inputs.release }}
         run: |
-          SEL=$(NATIV_RELEASE="${{ inputs.release }}" python3 -c "
+          SEL=$(python3 -c "
           import os
           from gildas_release import get_natif_commands, _release_sort_key, _load_release_sets
           sets = _load_release_sets()
@@ -118,20 +120,34 @@ jobs:
           pick = pick or sorted(cmds, key=lambda c: _release_sort_key(c.release))[-1]
           print(pick.command)
           ")
-          echo "command=$SEL" >> "$GITHUB_OUTPUT"
+          # Heredoc form: safe even if $SEL ever spans several lines.
+          {
+            echo "command<<SEL_EOF"
+            echo "$SEL"
+            echo "SEL_EOF"
+          } >> "$GITHUB_OUTPUT"
       - name: Build native SIF (needs root) and upload to the rolling release
         env:
           GH_TOKEN: ${{ github.token }}
+          # Passed via env and expanded as "$SEL_COMMAND" below: inlining
+          # step outputs into quoted shell text breaks (and is unsafe)
+          # whenever the value contains quotes or parens.
+          SEL_COMMAND: ${{ steps.sel.outputs.command }}
         run: |
-          sif=$(echo '${{ steps.sel.outputs.command }}' | grep -oE 'gildas-[^ ]+\.sif')
+          sif=$(printf '%s\n' "$SEL_COMMAND" | grep -oE 'gildas-[^ ]+\.sif')
+          if [ -z "$sif" ]; then
+            echo "::error title=SIF name not resolved::no 'gildas-*.sif' in the build command:" >&2
+            printf '%s\n' "$SEL_COMMAND" >&2
+            exit 1
+          fi
           if [ "${{ github.event_name }}" = "schedule" ]; then
             if gh release view sif-images --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$sif"; then
               echo "$sif already published, skipping."
               exit 0
             fi
           fi
-          echo "Running: ${{ steps.sel.outputs.command }}"
-          sudo -E bash -c '${{ steps.sel.outputs.command }}'
+          echo "Running: $SEL_COMMAND"
+          sudo -E bash -c "$SEL_COMMAND"
           gh release view sif-images >/dev/null 2>&1 || \
             gh release create sif-images --title "Singularity images (rolling)" \
               --notes "SIF images converted from Docker Hub tags. Rebuilt when the tags move."

@@ -60,6 +60,14 @@
 - Fail-open IMAGER/PIIC outages now surface as CI warnings: GitHub
   Actions annotations (`::warning title=…`) and colored `WARNING:` lines
   in GitLab job logs
+- CI warnings are printed on **stderr**: the GitHub `natif` SIF job
+  captured them on stdout while resolving the build command, and the
+  `::warning` text (quotes and parens included) then leaked into the
+  generated shell and crashed it with `syntax error near unexpected
+  token '('`. Annotations still render (Actions scans both streams);
+  the `sif.yml` step output is now written heredoc-style and consumed
+  via a step env var instead of being inlined into quoted shell text,
+  with a clear `::error` when no SIF name can be resolved
 - GitLab `sif-build` no longer fills `/tmp`: apptainer's build temp and
   cache moved to job-specific directories under `$CI_PROJECT_DIR`
   (override with `SIF_TMPDIR` / `SIF_CACHEDIR`), cleaned on exit;

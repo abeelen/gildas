@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -36,15 +37,20 @@ SECTION_WITH_PIIC = "with-piic"
 def _ci_warning(title: str, message: str) -> None:
     """Surface a non-fatal warning in CI.
 
-    GitHub Actions renders ``::warning`` as a run/PR annotation; GitLab has
-    no annotation API, so emit a colored ``WARNING:`` line in the job log.
+    GitHub Actions renders ``::warning`` as a run/PR annotation (commands
+    are scanned on both stdout and stderr); GitLab has no annotation API,
+    so emit a colored ``WARNING:`` line in the job log. Always printed on
+    **stderr** so stdout stays parseable: CI steps capture this script's
+    stdout with ``$(...)`` to resolve a build command, and a warning
+    leaking there previously broke the generated shell (unbalanced
+    quotes) and failed the workflow.
     """
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::warning title={title}::{message}", flush=True)
+        print(f"::warning title={title}::{message}", file=sys.stderr, flush=True)
     elif os.environ.get("GITLAB_CI") == "true":
-        print(f"\033[33mWARNING: {title}: {message}\033[0m", flush=True)
+        print(f"\033[33mWARNING: {title}: {message}\033[0m", file=sys.stderr, flush=True)
     else:
-        print(f"WARNING: {title}: {message}", flush=True)
+        print(f"WARNING: {title}: {message}", file=sys.stderr, flush=True)
 
 
 def _anchors(url: str) -> List[str]:
